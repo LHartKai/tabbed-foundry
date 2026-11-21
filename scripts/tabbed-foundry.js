@@ -55,25 +55,25 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._dividerCleanup = null;
     this._transitionQueue = Promise.resolve();
     this._detachingHostPromise = null;
-    this._returnDropHeader = null;
-    this._boundReturnDragOver = (event) => {
+    this._workspaceReturnDropTarget = null;
+    this._boundWorkspaceReturnDragOver = (event) => {
       if (!this._dragSession?.app || !this._tabbedApps.has(this._dragSession.app.id)) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-      this._returnDropHeader?.classList.add("tabbed-foundry-return-drop-active");
+      this._workspaceReturnDropTarget?.classList.add("tabbed-foundry-workspace-return-drop-active");
     };
-    this._boundReturnDragLeave = (event) => {
-      if (!this._returnDropHeader?.contains(event.relatedTarget)) {
-        this._returnDropHeader?.classList.remove("tabbed-foundry-return-drop-active");
+    this._boundWorkspaceReturnDragLeave = (event) => {
+      if (!this._workspaceReturnDropTarget?.contains(event.relatedTarget)) {
+        this._workspaceReturnDropTarget?.classList.remove("tabbed-foundry-workspace-return-drop-active");
       }
     };
-    this._boundReturnDrop = (event) => {
+    this._boundWorkspaceReturnDrop = (event) => {
       const appId = this._draggedAppId(event);
       const app = appId ? this._tabbedApps.get(appId) : null;
-      if (!app) return;
+      if (!app || app.parent !== this) return;
       event.preventDefault();
       event.stopPropagation();
-      this._returnDropHeader?.classList.remove("tabbed-foundry-return-drop-active");
+      this._workspaceReturnDropTarget?.classList.remove("tabbed-foundry-workspace-return-drop-active");
       this._finishDragSession(true);
       this._returnApplicationToWorkspace(app).catch(error => {
         console.error("[" + MODULE_ID + "] Não foi possível devolver a aplicação ao workspace principal.", error);
@@ -82,7 +82,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     };
 
     this.addEventListener("close", () => {
-      this._removeReturnDropTarget();
+      this._removeWorkspaceReturnDropTarget();
       this._removeLayoutObservers();
       this._closeTabContextMenu();
       this._finishDragSession(false);
@@ -306,14 +306,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       view.addEventListener("resize", this._boundLayout);
     }
 
-    const returnDropHeader = this.window?.header ?? element.querySelector(":scope > .window-header");
-    if (returnDropHeader !== this._returnDropHeader) {
-      this._removeReturnDropTarget();
-      this._returnDropHeader = returnDropHeader ?? null;
-      this._returnDropHeader?.addEventListener("dragover", this._boundReturnDragOver);
-      this._returnDropHeader?.addEventListener("dragleave", this._boundReturnDragLeave);
-      this._returnDropHeader?.addEventListener("drop", this._boundReturnDrop);
-    }
+    this._setupWorkspaceReturnDropTarget();
     if (!this._resizeObserver && typeof view.ResizeObserver === "function") {
       this._resizeObserver = new view.ResizeObserver(this._boundLayout);
       this._resizeObserver.observe(content);
@@ -336,18 +329,36 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._observedChildren.set(app.id, element);
   }
 
-  _removeReturnDropTarget() {
-    const header = this._returnDropHeader;
-    if (!header) return;
-    header.removeEventListener("dragover", this._boundReturnDragOver);
-    header.removeEventListener("dragleave", this._boundReturnDragLeave);
-    header.removeEventListener("drop", this._boundReturnDrop);
-    header.classList.remove("tabbed-foundry-return-drop-active");
-    this._returnDropHeader = null;
+  _setupWorkspaceReturnDropTarget() {
+    const mainSidebar = ui.sidebar instanceof ApplicationV2 ? ui.sidebar : workspaceAnchor;
+    const sidebarElement = mainSidebar?.element;
+    if (!sidebarElement) return;
+
+    // Sidebar's native navigation is the return destination. Listening on the
+    // main Foundry document is important: the Tabbed host itself lives in a
+    // detached document, so a drop on the native sidebar must be handled there.
+    const target = sidebarElement.querySelector("nav.tabs[data-group='primary'], nav.tabs, .tabs[data-group='primary'], .tabs");
+    if (!target || target === this._workspaceReturnDropTarget) return;
+
+    this._removeWorkspaceReturnDropTarget();
+    this._workspaceReturnDropTarget = target;
+    target.addEventListener("dragover", this._boundWorkspaceReturnDragOver, true);
+    target.addEventListener("dragleave", this._boundWorkspaceReturnDragLeave, true);
+    target.addEventListener("drop", this._boundWorkspaceReturnDrop, true);
+  }
+
+  _removeWorkspaceReturnDropTarget() {
+    const target = this._workspaceReturnDropTarget;
+    if (!target) return;
+    target.removeEventListener("dragover", this._boundWorkspaceReturnDragOver, true);
+    target.removeEventListener("dragleave", this._boundWorkspaceReturnDragLeave, true);
+    target.removeEventListener("drop", this._boundWorkspaceReturnDrop, true);
+    target.classList.remove("tabbed-foundry-workspace-return-drop-active");
+    this._workspaceReturnDropTarget = null;
   }
 
   _removeLayoutObservers() {
-    this._removeReturnDropTarget();
+    this._removeWorkspaceReturnDropTarget();
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._childResizeObserver?.disconnect();

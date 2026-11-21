@@ -9,7 +9,7 @@ Módulo experimental para Foundry VTT v14 que reúne aplicações `ApplicationV2
 - Cada painel mantém um conjunto independente de abas.
 - Abas podem ser reordenadas arrastando-as dentro da barra.
 - Clique com o botão direito em uma aba para:
-  - **Voltar para o Foundry:** transferir a aplicação para a Sidebar nativa (janela principal) usando `ui.sidebar.renderChild()`.
+  - **Voltar para o Foundry:** reanexar temporariamente a janela Tabbed com `ApplicationV2.attachWindow()`, transferir a aplicação para a Sidebar do documento principal usando `renderChild()`, e destacar novamente a janela Tabbed se ainda houver outras aplicações.
   - **Destacar em janela própria:** usar `ApplicationV2.detachWindow()` para abrir uma janela externa nativa.
 - Fechar uma aba fecha apenas aquela aplicação.
 - Quando a última aplicação deixa a janela Tabbed (por fechamento, retorno ao workspace ou detach nativo), a janela hospedeira é fechada automaticamente.
@@ -52,7 +52,8 @@ A configuração é individual por cliente (`scope: client`).
 ## Arquitetura
 
 - `HandlebarsApplicationMixin(ApplicationV2)` para a janela hospedeira.
-- `ApplicationV2.renderChild()` para gerenciar aplicações como filhas do Tabbed Foundry e, ao retornar ao workspace, como filhas da Sidebar nativa.
+- `ApplicationV2.attachWindow()` para trazer temporariamente o Tabbed Foundry ao workspace principal antes da transferência.
+- `ApplicationV2.renderChild()` para transferir a aplicação à Sidebar do documento principal; depois, o Tabbed restante é destacado novamente.
 - `ApplicationV2.detachWindow()` para destacar uma aplicação em sua própria janela nativa.
 - A árvore recursiva de painéis (`pane` / `split`) controla grupos de abas, divisões e proporções.
 - Os separadores usam Pointer Events; as zonas de divisão usam HTML Drag and Drop.
@@ -66,7 +67,7 @@ A configuração é individual por cliente (`scope: client`).
 - Testar no Foundry Desktop v14.365: dividir horizontal e verticalmente, divisões aninhadas, redimensionar separadores, mover abas entre painéis, soltar fora do host, cancelar com Escape e fechar a última aplicação.
 - Com Monk's Enhanced Journal ativo, testar fechar uma página interna, alternar páginas e adicionar novas páginas.
 - Testar Playlist Directory ao expandir/recolher pastas e Combat Tracker ao iniciar/avançar combate.
-- Testar retorno à janela principal via Sidebar, detach nativo individual e fechamento automático da janela Tabbed vazia.
+- Testar retorno à janela principal: o host deve anexar-se temporariamente ao documento principal, a aplicação deve passar para `ui.sidebar` desse mesmo documento (validado por `ownerDocument`) e o host deve destacar-se novamente se ainda houver abas. Testar também detach nativo individual e fechamento automático da janela Tabbed vazia.
 - A janela destacada individual é criada pelo detach nativo do Foundry; itens de menu do aplicativo desktop (Electron) não são criados pelo Tabbed Foundry.
 
 A implementação permanece experimental até esses testes serem feitos no cliente Foundry Desktop.

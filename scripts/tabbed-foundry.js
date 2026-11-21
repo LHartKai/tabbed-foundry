@@ -308,7 +308,8 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
     const returnDropHeader = this.window?.header ?? element.querySelector(":scope > .window-header");
     if (returnDropHeader !== this._returnDropHeader) {
-        this._returnDropHeader = returnDropHeader ?? null;
+      this._removeReturnDropTarget();
+      this._returnDropHeader = returnDropHeader ?? null;
       this._returnDropHeader?.addEventListener("dragover", this._boundReturnDragOver);
       this._returnDropHeader?.addEventListener("dragleave", this._boundReturnDragLeave);
       this._returnDropHeader?.addEventListener("drop", this._boundReturnDrop);

@@ -51,7 +51,7 @@ jobs:
         id: version
         env:
           BUMP: ${{ inputs.bump || 'patch' }}
-          PRERELEASE: ${{ inputs.prerelease || 'false' }}
+          PRERELEASE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-tabbed-foundry]') || inputs.prerelease || false }}
           REPOSITORY: ${{ github.repository }}
         run: |
           git fetch --tags --force
@@ -135,7 +135,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          PRERELEASE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-tabbed-foundry]') || inputs.prerelease || false }}
         run: |
           NOTES_ARGS=()
           if [ "$PRERELEASE" = "true" ]; then

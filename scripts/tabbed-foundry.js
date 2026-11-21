@@ -995,7 +995,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
         console.error("[" + MODULE_ID + "] Falha ao restaurar a aplicação no Tabbed Foundry.", rollbackError);
       }
 
-      if (hostAttachedToMain && this.rendered && !this.window?.windowId) {
+      if (hostAttachedToMain && this.rendered && this.element?.ownerDocument === mainDocument) {
         try {
           await this.detachWindow({});
           this._setupLayoutObservers();
@@ -1045,11 +1045,14 @@ async function getOrCreateWorkspaceAnchor() {
 }
 
 async function getOrCreateHost() {
+  // A return-to-workspace operation temporarily attaches the host to the main
+  // window. Wait for that transfer before deciding whether it needs detaching.
+  if (hostCreation) return hostCreation;
   if (host?.rendered) {
+    await host._transitionQueue;
     if (!host.window?.windowId) await host.ensureDetachedWindow();
     return host;
   }
-  if (hostCreation) return hostCreation;
 
   hostCreation = (async () => {
     const candidate = new TabbedFoundryHost();

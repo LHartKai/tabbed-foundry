@@ -2,7 +2,7 @@
   "id": "tabbed-foundry",
   "title": "Tabbed Foundry",
   "description": "Modo de segurança: preserva o destacamento nativo do Foundry enquanto a integração de janelas é revisada.",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "authors": [
     {
       "name": "LHartKai"

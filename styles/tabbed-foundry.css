@@ -1,0 +1,85 @@
+.tabbed-foundry-host .window-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tabbed-foundry-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tabbed-foundry-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  gap: 0.25rem;
+  min-height: 2.5rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border-light-primary, #777);
+}
+
+.tabbed-foundry-tab {
+  display: flex;
+  align-items: center;
+  max-width: 16rem;
+  border: 1px solid var(--color-border-light-tertiary, #555);
+  border-bottom: 0;
+  border-radius: 5px 5px 0 0;
+  background: var(--background-color, rgba(0, 0, 0, 0.12));
+}
+
+.tabbed-foundry-tab.active {
+  background: var(--color-bg, rgba(255, 255, 255, 0.12));
+  border-color: var(--color-border-highlight, #c9a66b);
+}
+
+.tabbed-foundry-tab button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tabbed-foundry-tab-label {
+  overflow: hidden;
+  padding: 0.5rem 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabbed-foundry-tab-close {
+  padding: 0.35rem 0.55rem;
+  font-size: 1.1rem;
+}
+
+.tabbed-foundry-empty {
+  align-self: center;
+  padding: 0.5rem;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.tabbed-foundry-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tabbed-foundry-stage > .application {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+}
+
+.tabbed-foundry-stage > .application[hidden] {
+  display: none !important;
+}

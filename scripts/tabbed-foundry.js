@@ -116,7 +116,14 @@ class TabbedFoundryHost extends HandlebarsApplication {
     const view = element?.ownerDocument?.defaultView;
     const content = element?.querySelector(":scope > .window-content") ?? element?.querySelector(".window-content");
     if (!view || !content) return;
-    if (this._observedView !== view) {
+
+    // The transparent host frame must not intercept clicks intended for its
+    // child application. Keep only the host header and resize handle interactive.
+    this.window?.header?.style.setProperty("pointer-events", "auto", "important");
+    this.window?.resize?.style.setProperty("pointer-events", "auto", "important");
+    content.style.setProperty("pointer-events", "none", "important");
+
+    if (!this._observedView || this._observedView !== view) {
       this._removeLayoutObservers();
       this._observedView = view;
       view.addEventListener("resize", this._boundLayout);

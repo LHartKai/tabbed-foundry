@@ -337,7 +337,8 @@ class TabbedFoundryHost extends HandlebarsApplication {
     // Sidebar's native navigation is the return destination. Listening on the
     // main Foundry document is important: the Tabbed host itself lives in a
     // detached document, so a drop on the native sidebar must be handled there.
-    const target = sidebarElement.querySelector("nav.tabs[data-group='primary'], nav.tabs, .tabs[data-group='primary'], .tabs");
+    const selector = "#sidebar-tabs, .sidebar-tabs, nav.tabs[data-group='primary'], nav.tabs, .tabs[data-group='primary'], .tabs";
+    const target = sidebarElement.matches?.(selector) ? sidebarElement : sidebarElement.querySelector(selector);
     if (!target || target === this._workspaceReturnDropTarget) return;
 
     this._removeWorkspaceReturnDropTarget();

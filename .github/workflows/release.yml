@@ -1,19 +1,20 @@
-name: Create Release
+name: Create Stable Release
 
 on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Tipo de incremento da versão"
+        description: "Version increment (use promote to remove a beta suffix)"
         required: true
         type: choice
         default: patch
         options:
+          - promote
           - patch
           - minor
           - major
       prerelease:
-        description: "Criar uma pré-release"
+        description: "Publish the next version as a beta prerelease"
         required: true
         type: boolean
         default: false
@@ -27,7 +28,7 @@ concurrency:
 
 jobs:
   release:
-    name: Bump version, tag and publish
+    name: Validate, bump and publish
     runs-on: ubuntu-latest
 
     steps:
@@ -47,6 +48,7 @@ jobs:
         env:
           BUMP: ${{ inputs.bump }}
           PRERELEASE: ${{ inputs.prerelease }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           git fetch --tags --force
 
@@ -56,26 +58,35 @@ jobs:
             CURRENT="${LATEST_TAG#v}"
           fi
 
-          node - "$CURRENT" "$BUMP" "$PRERELEASE" <<'NODE'
+          node - "$CURRENT" "$BUMP" "$PRERELEASE" "$REPOSITORY" <<'NODE'
           const fs = require("fs");
-          const [current, bump, prerelease] = process.argv.slice(2);
+          const [current, bump, prerelease, repository] = process.argv.slice(2);
           const match = current.match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?$/);
           if (!match) throw new Error(`Invalid semantic version: ${current}`);
 
-          let [, major, minor, patch] = match;
+          let [, major, minor, patch, suffix] = match;
           major = Number(major);
           minor = Number(minor);
           patch = Number(patch);
 
-          if (bump === "major") { major++; minor = 0; patch = 0; }
-          else if (bump === "minor") { minor++; patch = 0; }
-          else { patch++; }
+          let next;
+          if (bump === "promote") {
+            if (!suffix) throw new Error("The current version is not a prerelease; there is no beta suffix to promote.");
+            if (prerelease === "true") throw new Error("Promotion creates a stable release; prerelease must be false.");
+            next = `${major}.${minor}.${patch}`;
+          } else {
+            if (bump === "major") { major++; minor = 0; patch = 0; }
+            else if (bump === "minor") { minor++; patch = 0; }
+            else if (bump === "patch") { patch++; }
+            else throw new Error(`Unknown bump type: ${bump}`);
 
-          let next = `${major}.${minor}.${patch}`;
-          if (prerelease === "true") next += "-beta.1";
+            next = `${major}.${minor}.${patch}`;
+            if (prerelease === "true") next += "-beta.1";
+          }
 
           const manifest = JSON.parse(fs.readFileSync("module.json", "utf8"));
           manifest.version = next;
+          manifest.download = `https://github.com/${repository}/releases/download/v${next}/tabbed-foundry.zip`;
           fs.writeFileSync("module.json", JSON.stringify(manifest, null, 2) + "\n");
 
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${next}\ntag=v${next}\n`);
@@ -96,17 +107,18 @@ jobs:
           git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
-      - name: Validate module source
+      - name: Validate module and smoke tests
         run: |
           node --check scripts/tabbed-foundry.js
-          node -e "const m = JSON.parse(require('fs').readFileSync('module.json', 'utf8')); if (m.id !== 'tabbed-foundry') process.exit(1);"
+          node tests/smoke.js
+          node -e "const m = JSON.parse(require('fs').readFileSync('module.json', 'utf8')); if (m.id !== 'tabbed-foundry' || !m.relationships?.requires?.some(r => r.id === 'lib-wrapper')) process.exit(1);"
           test -f styles/tabbed-foundry.css
           test -f templates/host.hbs
 
       - name: Package Foundry module
         run: |
           mkdir -p dist/tabbed-foundry
-          rsync -a --exclude='.git' --exclude='.github' --exclude='dist' ./ dist/tabbed-foundry/
+          rsync -a --exclude='.git' --exclude='.github' --exclude='dist' --exclude='tests' --exclude='.gitignore' ./ dist/tabbed-foundry/
           cd dist
           zip -r "../tabbed-foundry.zip" tabbed-foundry
           cd ..
@@ -135,4 +147,4 @@ jobs:
         run: |
           echo "Published Tabbed Foundry ${{ steps.version.outputs.version }}"
           echo "Manifest: https://github.com/${{ github.repository }}/releases/latest/download/module.json"
-          echo "Download: https://github.com/${{ github.repository }}/releases/latest/download/tabbed-foundry.zip"
+          echo "Download: https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/tabbed-foundry.zip"

@@ -1,0 +1,48 @@
+name: Validate Tabbed Foundry
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Syntax and compatibility smoke tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate JavaScript syntax
+        run: |
+          node --check scripts/tabbed-foundry.js
+          node --check scripts/integrations/monks-enhanced-journal.js
+
+      - name: Run smoke tests
+        run: |
+          node tests/smoke.js
+          node tests/mej-integration-smoke.js
+
+      - name: Validate Foundry manifest
+        run: |
+          node - <<'NODE'
+          const fs = require("fs");
+          const manifest = JSON.parse(fs.readFileSync("module.json", "utf8"));
+          if (manifest.id !== "tabbed-foundry") throw new Error("Invalid module id");
+          if (!manifest.esmodules.includes("scripts/tabbed-foundry.js")) throw new Error("Main script missing from manifest");
+          if (!manifest.esmodules.includes("scripts/integrations/monks-enhanced-journal.js")) throw new Error("MEJ integration missing from manifest");
+          if (!manifest.relationships?.requires?.some(r => r.id === "lib-wrapper")) throw new Error("libWrapper dependency missing");
+          if (manifest.relationships?.requires?.some(r => r.id === "monks-enhanced-journal")) throw new Error("MEJ must remain optional");
+          console.log(`Validated ${manifest.id} ${manifest.version}`);
+          NODE

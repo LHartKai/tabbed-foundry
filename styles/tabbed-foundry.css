@@ -376,3 +376,11 @@
   outline-offset: -3px;
   background: var(--color-hover, rgba(201, 166, 107, 0.22)) !important;
 }
+
+
+/* Highlight the native Foundry sidebar tab row while returning a Tabbed app. */
+.tabbed-foundry-workspace-return-drop-active {
+  outline: 2px dashed var(--color-border-highlight, #c9a66b) !important;
+  outline-offset: -3px;
+  background: var(--color-hover, rgba(201, 166, 107, 0.22)) !important;
+}

@@ -1415,6 +1415,7 @@ Hooks.once("init", () => {
     const windows = Object.values(ui?.windows ?? {});
     for (const app of windows) installExternalApplicationDrag(app);
   });
+});
 
 Hooks.once("ready", async () => {
   try {

@@ -84,6 +84,20 @@ class TabbedFoundryHost extends TabbedFoundryApplication {
     for (const [id, app] of this.tabbedApplications) {
       const tab = document.createElement("div");
       tab.className = `tabbed-foundry-tab${id === this.activeApplicationId ? " active" : ""}`;
+      tab.draggable = true;
+      tab.addEventListener("dragstart", (event) => {
+        event.dataTransfer?.setData("text/plain", id);
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+      });
+      tab.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      });
+      tab.addEventListener("drop", (event) => {
+        event.preventDefault();
+        const sourceId = event.dataTransfer?.getData("text/plain");
+        if (sourceId && sourceId !== id) this._reorderApplications(sourceId, id);
+      });
 
       const activate = document.createElement("button");
       activate.type = "button";
@@ -120,6 +134,17 @@ class TabbedFoundryHost extends TabbedFoundryApplication {
     if (!this.tabbedApplications.has(id)) return;
     this.activeApplicationId = id;
     this._syncApplications();
+    this._renderTabs();
+  }
+
+  _reorderApplications(sourceId, targetId) {
+    const ids = [...this.tabbedApplications.keys()];
+    const sourceIndex = ids.indexOf(sourceId);
+    const targetIndex = ids.indexOf(targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+
+    ids.splice(targetIndex, 0, ids.splice(sourceIndex, 1)[0]);
+    this.tabbedApplications = new Map(ids.map((id) => [id, this.tabbedApplications.get(id)]));
     this._renderTabs();
   }
 

@@ -1,48 +1,40 @@
 # Tabbed Foundry
 
-Módulo experimental para Foundry VTT v14 que reúne aplicações destacadas em uma única janela externa com abas.
+Módulo experimental para Foundry VTT v14 que reúne aplicações `ApplicationV2` destacadas em uma única janela externa com abas.
 
-## Estado
+## Como funciona
 
-**Implementação experimental inicial.** A arquitetura atual usa o ciclo de vida nativo de aplicações-filhas do Foundry (`ApplicationV2.renderChild`). Ainda precisa ser testada no Foundry Desktop v14.365 antes de ser considerada estável.
-
-## Comportamento
-
-- Ao destacar uma aplicação `ApplicationV2`, o módulo a encaminha para a janela externa Tabbed Foundry.
-- A primeira aplicação cria a janela hospedeira; as seguintes são registradas como aplicações-filhas da mesma janela.
-- As abas alternam a aplicação visível.
-- O botão de fechar de uma aba fecha apenas aquela aplicação.
-- Fechar a janela hospedeira segue o comportamento nativo do Foundry e fecha suas aplicações-filhas.
+- O primeiro destaque cria a janela externa do Tabbed Foundry.
+- A aplicação destacada é registrada como filha usando `ApplicationV2.renderChild()`.
+- Os próximos destaques são adicionados à mesma janela.
+- A alternância de abas apenas oculta/exibe a raiz da aplicação; o módulo não move manualmente os elementos do DOM.
+- As aplicações-filhas continuam sob o ciclo de vida nativo `parent` / `children` do Foundry.
+- As abas podem ser reorganizadas por arrastar e soltar e cada aplicação pode ser fechada individualmente.
 
 ## Configuração
 
-Em **Game Settings → Module Settings → Tabbed Foundry**:
+Em **Game Settings → Module Settings → Tabbed Foundry**, use **Agrupar aplicações destacadas automaticamente**.
 
-- **Agrupar aplicações destacadas** — ativado por padrão.
-- Quando desativado, o módulo chama o método original `ApplicationV2.detachWindow()` e o Foundry abre a aplicação em uma janela individual.
+- Ativado (padrão): o botão de destacar envia `ApplicationV2` para a janela Tabbed Foundry.
+- Desativado: o método original `ApplicationV2.detachWindow()` é executado sem agrupamento.
 
-A configuração usa escopo `client`, portanto cada cliente pode escolher seu próprio comportamento.
+A configuração é individual por cliente (`scope: client`) e vale para os próximos destaques, sem reiniciar o mundo. A versão anterior já utilizava a chave interna `enabled`, que foi preservada para não perder a preferência salva de cada cliente.
 
-## Arquitetura
+## Escopo e limitações
 
-- `HandlebarsApplicationMixin(ApplicationV2)` para a janela hospedeira.
-- `ApplicationV2.renderChild()` para registrar e renderizar as aplicações na mesma janela.
-- Interceptação de `ApplicationV2.detachWindow()` com bypass quando a configuração está desativada e fallback para o método original em caso de erro.
-- Nenhuma movimentação manual de elementos entre árvores DOM.
+- O agrupamento automático cobre `ApplicationV2`.
+- Aplicações legadas `ApplicationV1` não são interceptadas.
+- O botão/método de detach de uma aplicação que já está dentro do Tabbed Foundry continua podendo destacá-la individualmente; nesse caso ela é removida da barra de abas.
+- Se houver erro no agrupamento antes de a aplicação ser vinculada, o módulo tenta executar o detach nativo como fallback.
+- A implementação precisa ser validada em Foundry Desktop v14.365 com fichas, Journals, itens, compêndios, redimensionamento, minimização, fechamento e reabertura da janela hospedeira.
 
-## Limitações e testes necessários
+## Desenvolvimento
 
-- O agrupamento automático cobre `ApplicationV2`. Aplicações legadas `ApplicationV1` seguem o comportamento nativo.
-- Aplicações que não usam `ApplicationV2.detachWindow()` para destacar suas janelas não são interceptadas.
-- O CSS de dimensionamento das aplicações-filhas precisa ser validado no Foundry Desktop v14.365.
-- Testar fichas, Journals, itens, compêndios, minimização, restauração, fechamento de abas e fechamento da janela hospedeira.
-- Verificar aplicações que dependem de dimensões ou posicionamento próprios.
+Copie a pasta `tabbed-foundry` para `Data/modules/` e ative o módulo. A versão atual é experimental; não considere a compatibilidade validada até executar os testes no cliente Foundry.
 
-## Instalação para desenvolvimento
+## API do Foundry utilizada
 
-Copie a pasta `tabbed-foundry` para `Data/modules/` e ative o módulo no mundo.
-
-## Documentação
-
-- [ApplicationV2 v14](https://foundryvtt.com/api/v14/classes/foundry.applications.api.ApplicationV2.html)
-- [Foundry Applications API](https://foundryvtt.com/api/modules/foundry.applications.html)
+- `foundry.applications.api.HandlebarsApplicationMixin`
+- `ApplicationV2.renderChild()`
+- `ApplicationV2.detachWindow()`
+- `ApplicationV2.parent` e `ApplicationV2.children`

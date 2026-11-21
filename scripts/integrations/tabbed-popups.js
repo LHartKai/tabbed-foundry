@@ -25,10 +25,10 @@ function findHostForDocument(doc) {
   return candidate;
 }
 
-function withPopupCaptureContext(targetHost, callback, { persistUntilSettled = false } = {}) {
+function withPopupCaptureContext(targetHost, callback) {
   if (!targetHost) return callback();
   const previous = activePopupCapture;
-  const capture = { host: targetHost, previous, persistUntilSettled };
+  const capture = { host: targetHost, previous };
   activePopupCapture = capture;
   let result;
   try {
@@ -72,7 +72,7 @@ function bindHostDocument(targetHost, doc) {
     );
     if (!sourceApp) return;
     const previous = activePopupCapture;
-    const capture = { host: targetHost, previous, persistUntilSettled: false };
+    const capture = { host: targetHost, previous };
     activePopupCapture = capture;
     doc.defaultView?.setTimeout(() => {
       if (activePopupCapture === capture) activePopupCapture = previous;
@@ -139,9 +139,9 @@ function installPopupCapture() {
         if (!capture || !capture.host?.rendered || !getTabbedHost() || this === capture.host) {
           return wrapped(options, legacyOptions);
         }
-        if (!capture.persistUntilSettled && activePopupCapture === capture) {
-          activePopupCapture = capture.previous;
-        }
+        // Consume the context on the first dialog only. This prevents a long
+        // async create flow from capturing unrelated dialogs opened afterward.
+        if (activePopupCapture === capture) activePopupCapture = capture.previous;
         const renderOptions = normalizeRenderOptions(options, legacyOptions);
         return renderPopupInHost(this, capture.host, renderOptions, () => wrapped(options, legacyOptions));
       },
@@ -165,11 +165,7 @@ function installPopupCapture() {
         function (wrapped, event, button, ...args) {
           const doc = this?.element?.ownerDocument ?? button?.ownerDocument ?? event?.currentTarget?.ownerDocument;
           const targetHost = findHostForDocument(doc);
-          return withPopupCaptureContext(
-            targetHost,
-            () => wrapped(event, button, ...args),
-            { persistUntilSettled: true }
-          );
+          return withPopupCaptureContext(targetHost, () => wrapped(event, button, ...args));
         },
         "WRAPPER"
       );

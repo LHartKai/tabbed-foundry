@@ -108,60 +108,55 @@ function patchEnhancedJournalSheetRender(mej) {
   return true;
 }
 
-function patchRemoveDuplicateTabsForClass(ApplicationClass) {
-  let prototype = ApplicationClass?.prototype;
-  while (prototype && prototype !== Object.prototype) {
-    if (Object.prototype.hasOwnProperty.call(prototype, "removeDuplicateTabs")) break;
-    prototype = Object.getPrototypeOf(prototype);
-  }
+function patchRemoveDuplicateTabsForInstance(instance) {
+  const original = instance?.removeDuplicateTabs;
+  if (typeof original !== "function") return false;
+  if (original[PATCH_MARKER]) return true;
 
-  if (!prototype || typeof prototype.removeDuplicateTabs !== "function") return false;
-  if (prototype.removeDuplicateTabs[PATCH_MARKER]) return true;
-
-  const patchedRemoveDuplicateTabs = function () {
-    const originalTabs = this.tabs;
-    if (!Array.isArray(originalTabs) || originalTabs.length < 2) return;
+  const patched = function () {
+    const originalTabs = Array.isArray(this.tabs) ? this.tabs : [];
+    if (originalTabs.length < 2) return;
 
     const uniqueTabs = originalTabs.filter((tab, index, self) =>
       index === self.findIndex(candidate => candidate.entityId === tab.entityId)
     );
     if (uniqueTabs.length === originalTabs.length) return;
 
-    // MEJ 14.02 calls removeDuplicateTabs before assigning this.tabs.active.
-    // Preserve the active duplicate on the surviving tab without that helper.
-    if (!uniqueTabs.some(tab => tab.active)) {
-      const previouslyActive = originalTabs.find(tab => tab.active);
-      if (previouslyActive?.entityId) {
-        const replacement = uniqueTabs.find(tab => tab.entityId === previouslyActive.entityId);
-        if (replacement) replacement.active = true;
-      }
+    // MEJ 14.02 invokes removeDuplicateTabs before it creates this.tabs.active.
+    // Keep the active duplicate on the surviving tab without calling that helper.
+    const previouslyActive = originalTabs.find(tab => tab.active);
+    if (previouslyActive?.entityId) {
+      const replacement = uniqueTabs.find(tab => tab.entityId === previouslyActive.entityId);
+      if (replacement) replacement.active = true;
     }
 
     this.tabs = uniqueTabs;
   };
 
-  Object.defineProperty(patchedRemoveDuplicateTabs, PATCH_MARKER, { value: true });
-  Object.defineProperty(patchedRemoveDuplicateTabs, "original", { value: prototype.removeDuplicateTabs });
-  prototype.removeDuplicateTabs = patchedRemoveDuplicateTabs;
-  return true;
+  Object.defineProperty(patched, PATCH_MARKER, { value: true });
+  Object.defineProperty(patched, "original", { value: original });
+  instance.removeDuplicateTabs = patched;
+  return instance.removeDuplicateTabs === patched;
 }
 
 function installDuplicateTabsOrderPatch() {
   if (installDuplicateTabsOrderPatch[PATCH_MARKER]) return true;
 
   const ApplicationV2 = foundry.applications?.api?.ApplicationV2;
-  if (typeof ApplicationV2?.prototype?._preFirstRender !== "function") return false;
+  if (typeof ApplicationV2?.prototype?.render !== "function") return false;
   if (typeof libWrapper === "undefined" || !game.modules.get("lib-wrapper")?.active) return false;
 
   try {
-    // Use libWrapper instead of replacing ApplicationV2.prototype globally.
-    // The class-specific method is patched only for MEJ's EnhancedJournal.
+    // Wrap render rather than ApplicationV2._preFirstRender. EnhancedJournal
+    // overrides _preFirstRender, and its mixin/super chain is not a reliable
+    // interception point. render runs before the first _preFirstRender call,
+    // so the instance-local fix is guaranteed to exist before Monk uses it.
     libWrapper.register(
       MODULE_ID,
-      "foundry.applications.api.ApplicationV2.prototype._preFirstRender",
+      "foundry.applications.api.ApplicationV2.prototype.render",
       function (wrapped, ...args) {
-        if (this?.constructor?.name === "EnhancedJournal") {
-          patchRemoveDuplicateTabsForClass(this.constructor);
+        if (this?.id === "MonksEnhancedJournal" || this?.constructor?.name === "EnhancedJournal") {
+          patchRemoveDuplicateTabsForInstance(this);
         }
         return wrapped(...args);
       },

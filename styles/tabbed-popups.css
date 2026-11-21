@@ -1,0 +1,12 @@
+/* DialogV2 windows opened from Tabbed child applications. */
+.tabbed-foundry-popup {
+  z-index: 100005 !important;
+  pointer-events: auto !important;
+}
+
+.tabbed-foundry-popup > .window-header,
+.tabbed-foundry-popup > .window-header *,
+.tabbed-foundry-popup > .window-content,
+.tabbed-foundry-popup > .window-content * {
+  pointer-events: auto !important;
+}

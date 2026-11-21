@@ -81,11 +81,15 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${next}\ntag=v${next}\n`);
           NODE
 
-      - name: Commit version update
+      - name: Commit version update when needed
         run: |
           git add module.json
-          git commit -m "chore(release): v${{ steps.version.outputs.version }}"
-          git push origin "HEAD:${{ github.ref_name }}"
+          if git diff --cached --quiet; then
+            echo "module.json already has version ${{ steps.version.outputs.version }}; skipping commit."
+          else
+            git commit -m "chore(release): v${{ steps.version.outputs.version }}"
+            git push origin "HEAD:${{ github.ref_name }}"
+          fi
 
       - name: Create and push version tag
         run: |
@@ -122,6 +126,6 @@ jobs:
 
       - name: Report release
         run: |
-          echo "Published Tabbed Foundry ${{ steps.version.outputs.tag }}"
+          echo "Published Tabbed Foundry ${{ steps.version.outputs.version }}"
           echo "Manifest: https://github.com/${{ github.repository }}/releases/latest/download/module.json"
           echo "Download: https://github.com/${{ github.repository }}/releases/latest/download/tabbed-foundry.zip"

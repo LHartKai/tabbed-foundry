@@ -31,6 +31,7 @@
     "scripts/integrations/monks-enhanced-journal.js"
   ],
   "styles": [
-    "styles/tabbed-foundry.css"
+    "styles/tabbed-foundry.css",
+    "styles/tabbed-popups.css"
   ]
 }

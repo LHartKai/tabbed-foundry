@@ -1,30 +1,77 @@
 # Tabbed Foundry
 
-> **EMERGENCY SAFE MODE (v1.2.4):** automatic tab grouping is temporarily disabled. This build deliberately does not override `ApplicationV2.detachWindow()` so Foundry can use its native application and Journal lifecycle while the reattachment issue is investigated. Fully quit and restart the Foundry desktop process before testing this build; reloading only the world does not clear an older in-memory prototype override.
+Módulo experimental para Foundry VTT v14 que organiza aplicações `ApplicationV2` destacadas em uma janela externa única, com abas e painéis divididos.
 
-Módulo experimental para Foundry VTT v14 que pretende reunir aplicações `ApplicationV2` destacadas em uma única janela externa. A funcionalidade de agrupamento está temporariamente suspensa nesta versão de segurança.
+> **Prévia de desenvolvimento — v1.3.0-beta.1.** Esta versão reativa o agrupamento após o modo de segurança e muda a interceptação para libWrapper. Ainda precisa de validação no Foundry Desktop v14.365 antes de ser considerada estável.
 
-## Estado da versão de segurança
+## Funcionalidades
 
-- Não instala interceptação em `ApplicationV2.prototype.detachWindow`.
-- Não captura novas aplicações para a janela Tabbed.
-- Mantém o botão de destaque nativo do Foundry.
-- Desativa e redefine a preferência de agrupamento automático para falso.
-- A implementação de abas e Split View permanece no código para revisão, mas não é ativada nesta versão.
+- Agrupamento automático de aplicações `ApplicationV2` destacadas a partir do workspace principal.
+- Abas independentes dentro de cada painel.
+- Split View horizontal e vertical por arrastar uma aba para as zonas laterais de um painel.
+- Divisores redimensionáveis; duplo clique restaura a divisão em 50/50.
+- Menu de contexto por aba para devolver a aplicação ao Foundry ou destacá-la em uma janela nativa própria.
+- Fechamento de uma aba fecha somente a aplicação correspondente.
+- Integração visual opcional com Monk's Enhanced Journal para evitar que o clique de fechar uma página também selecione essa página.
+
+## Dependências
+
+- Foundry VTT v14 (testes-alvo: v14.365).
+- **libWrapper** — dependência obrigatória para compor a interceptação com outros módulos sem substituir diretamente `ApplicationV2.prototype.detachWindow`.
+
+O Monk's Enhanced Journal não é uma dependência. A integração com ele só é aplicada quando o módulo está ativo.
+
+## Configuração
+
+Em **Configurações do Jogo → Configurações de Módulos → Tabbed Foundry**, use:
+
+- **Agrupar aplicações destacadas automaticamente**: ativado por padrão.
+- Desativado: os próximos destacamentos usam o comportamento nativo do Foundry.
+- Ativado: aplicações destacadas do workspace principal são incorporadas à janela Tabbed Foundry.
+
+A configuração é individual por cliente. Desativá-la não fecha automaticamente as aplicações que já estão dentro da janela Tabbed: devolva-as pelo menu de contexto ou feche suas abas.
+
+## Como funciona a interceptação
+
+O módulo registra um wrapper `MIXED` de `foundry.applications.api.ApplicationV2.prototype.detachWindow` por meio do libWrapper.
+
+- Quando o agrupamento está desativado, a chamada continua diretamente para o destacamento nativo.
+- Aplicações já destacadas ou pertencentes a outra aplicação-pai não são capturadas.
+- O próprio host Tabbed sempre usa o destacamento nativo do Foundry.
+- Ao destacar uma aplicação que já está em uma aba, ela só é removida do layout depois que o destacamento nativo termina com sucesso.
+- Se o registro do wrapper falhar, o módulo falha de forma segura e mantém o destacamento nativo. O console informa o motivo.
+
+As operações de entrada, saída e reanexação são serializadas por uma fila para evitar transferências concorrentes. O módulo também registra conflitos de libWrapper que envolvam seu próprio wrapper.
+
+## Roteiro de validação da prévia
+
+Teste primeiro em uma cópia do mundo e com o módulo **Tabbed Journals** desativado, para evitar dois módulos interceptando a abertura de Journals ao mesmo tempo.
+
+1. Ative o Tabbed Foundry e confirme no console que o agrupamento automático está ativado e a interceptação via libWrapper foi instalada.
+2. Destaque duas aplicações `ApplicationV2` a partir da janela principal. Elas devem aparecer como abas na mesma janela Tabbed.
+3. Alterne entre as abas e redimensione a janela.
+4. Arraste uma aba para a esquerda/direita e depois para cima/baixo de outro painel. Verifique a divisão e o redimensionamento.
+5. No menu de contexto de uma aba, devolva uma aplicação ao Foundry enquanto outra permanece no Tabbed.
+6. No menu de contexto de outra aba, destaque-a em uma janela nativa separada.
+7. Teste Journals, incluindo abrir páginas, fechar páginas internas e fechar a aplicação pela aba.
+8. Desative a opção de agrupamento e confirme que os próximos destacamentos usam a janela nativa.
+9. Reative a opção e repita os testes de destacamento e reanexação.
 
 ## Recuperação
 
-1. Encerre o Foundry Desktop usando **Application → Quit**.
-2. Confirme no Gerenciador de Tarefas que todos os processos `Foundry.exe` foram encerrados.
-3. Se a abertura de Journals continuar quebrada, renomeie ou remova `Data/modules/tabbed-foundry` e inicie o Foundry sem o módulo.
-4. Se o problema persistir com o módulo removido após um encerramento completo, desative temporariamente os demais módulos e verifique o primeiro erro vermelho do Console (F12) ao abrir um Journal.
+Se uma aplicação ficar presa ou a janela deixar de responder:
 
-## Funcionalidades em desenvolvimento (não ativadas em v1.2.4)
+1. Use o menu de contexto da aba para devolver a aplicação ao Foundry, quando disponível.
+2. Caso a janela Tabbed não responda, feche o Foundry Desktop completamente e abra-o novamente.
+3. Se estiver atualizando a partir de uma versão que substituía diretamente o método nativo, encerre todos os processos do Foundry antes de instalar esta versão. Isso remove qualquer interceptação antiga que ainda esteja na memória do processo.
 
-A versão de desenvolvimento contém a arquitetura de Split View, abas independentes por painel, separadores redimensionáveis e uma integração opcional com Monk's Enhanced Journal. Esses recursos ainda precisam ser validados e não devem ser considerados disponíveis nesta versão de segurança.
+## Desenvolvimento
 
-## Compatibilidade
+Validação automatizada:
 
-- Foundry VTT v14.
-- O módulo não exige Monk's Enhanced Journal.
-- Nenhum comportamento de destacamento é interceptado na versão de segurança.
+```bash
+node --check scripts/tabbed-foundry.js
+node tests/smoke.js
+```
+
+A validação automatizada cobre a instalação do wrapper, o uso da configuração, os caminhos de fallback nativo e regressões estruturais conhecidas. Ela não substitui os testes de interface dentro do Foundry Desktop.

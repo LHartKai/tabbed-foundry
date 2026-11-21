@@ -29,11 +29,14 @@ function installExternalApplicationDrag(app) {
   if (externalDragApplications.has(app)) return true;
 
   const header = app.window?.header ?? app.element?.querySelector(":scope > .window-header");
-  if (!header) return false;
+  const dragHandle = app.window?.title ?? header?.querySelector?.(".window-title, h1, h2");
+  if (!header || !dragHandle) return false;
 
-  header.draggable = true;
-  header.classList.add("tabbed-foundry-external-drag-handle");
-  header.addEventListener("dragstart", (event) => {
+  // Use only the visible application title as a drag handle. Keeping the rest
+  // of the header untouched preserves Foundry's normal window-move behaviour.
+  dragHandle.draggable = true;
+  dragHandle.classList.add("tabbed-foundry-external-drag-handle");
+  dragHandle.addEventListener("dragstart", (event) => {
     if (app.parent instanceof TabbedFoundryHost || !app.window?.windowId) {
       event.preventDefault();
       return;

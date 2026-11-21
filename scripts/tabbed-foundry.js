@@ -1,14 +1,13 @@
 const MODULE_ID = "tabbed-foundry";
-const SETTING_AUTO_GROUP = "enabled";
-const PATCH_FLAG = "__tabbedFoundryDetachPatch";
+const SETTING_AUTO_GROUP = "autoGrouping";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 const HandlebarsApplication = HandlebarsApplicationMixin(ApplicationV2);
 
 let host = null;
 let workspaceAnchor = null;
-let originalDetachWindow = null;
 let hostCreation = null;
+let detachInterceptorInstalled = false;
 const pendingCaptures = new WeakMap();
 
 class TabbedFoundryHost extends HandlebarsApplication {
@@ -50,7 +49,10 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._observedChildren = new Map();
     this._patchedMejCloseButtons = new WeakSet();
     this._layoutFrame = null;
+    this._layoutFrameView = null;
     this._dividerCleanup = null;
+    this._transitionQueue = Promise.resolve();
+    this._detachingHostPromise = null;
 
     this.addEventListener("close", () => {
       this._removeLayoutObservers();
@@ -82,16 +84,39 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._scheduleLayout();
   }
 
-  async ensureDetachedWindow() {
-    if (!this.rendered) await this.render({ force: true });
-    if (!this.window?.windowId) {
-      await originalDetachWindow.call(this, {});
-    }
-    this._setupLayoutObservers();
-    this._scheduleLayout();
+  _enqueueTransition(operation) {
+    const task = this._transitionQueue.then(operation, operation);
+    this._transitionQueue = task.catch(() => undefined);
+    return task;
   }
 
-  async adopt(app, options = {}) {
+  async ensureDetachedWindow() {
+    if (!this.rendered) await this.render({ force: true });
+    if (this.window?.windowId) {
+      this._setupLayoutObservers();
+      this._scheduleLayout();
+      return;
+    }
+    if (this._detachingHostPromise) return this._detachingHostPromise;
+
+    this._detachingHostPromise = (async () => {
+      if (!this.window?.windowId) await this.detachWindow({});
+      this._setupLayoutObservers();
+      this._scheduleLayout();
+    })();
+
+    try {
+      await this._detachingHostPromise;
+    } finally {
+      this._detachingHostPromise = null;
+    }
+  }
+
+  adopt(app, options = {}) {
+    return this._enqueueTransition(() => this._adoptApplication(app, options));
+  }
+
+  async _adoptApplication(app, options = {}) {
     if (!(app instanceof ApplicationV2) || app === this) {
       throw new TypeError("Tabbed Foundry só pode agrupar instâncias ApplicationV2.");
     }
@@ -277,10 +302,11 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._observedChildren.clear();
     this._observedView?.removeEventListener("resize", this._boundLayout);
     this._observedView = null;
-    if (this._layoutFrame && this.element?.ownerDocument?.defaultView) {
-      this.element.ownerDocument.defaultView.cancelAnimationFrame(this._layoutFrame);
+    if (this._layoutFrame !== null) {
+      this._layoutFrameView?.cancelAnimationFrame?.(this._layoutFrame);
     }
     this._layoutFrame = null;
+    this._layoutFrameView = null;
   }
 
   _scheduleLayout() {
@@ -289,9 +315,16 @@ class TabbedFoundryHost extends HandlebarsApplication {
       this._layoutChildren();
       return;
     }
-    if (this._layoutFrame !== null) return;
+    if (this._layoutFrame !== null && this._layoutFrameView === view) return;
+    if (this._layoutFrame !== null) {
+      this._layoutFrameView?.cancelAnimationFrame?.(this._layoutFrame);
+      this._layoutFrame = null;
+      this._layoutFrameView = null;
+    }
+    this._layoutFrameView = view;
     this._layoutFrame = view.requestAnimationFrame(() => {
       this._layoutFrame = null;
+      this._layoutFrameView = null;
       this._layoutChildren();
     });
   }
@@ -860,15 +893,19 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._contextMenuCleanup?.();
   }
 
-  async _returnApplicationToWorkspace(app) {
+  _returnApplicationToWorkspace(app) {
+    return this._enqueueTransition(() => this._returnApplicationToWorkspaceNow(app));
+  }
+
+  async _returnApplicationToWorkspaceNow(app) {
     if (!this._tabbedApps.has(app.id)) return app;
     if (app.parent !== this) {
       throw new Error("A aplicação não está mais vinculada à janela Tabbed Foundry.");
     }
 
-    const tabbedHost = this;
     const originalPosition = this._originalPositions.get(app.id);
     let mainSidebar = null;
+    let mainDocument = null;
     let hostAttachedToMain = false;
     let appMovedToMain = false;
 
@@ -879,19 +916,21 @@ class TabbedFoundryHost extends HandlebarsApplication {
       this._clearChildPresentation(app);
       if (originalPosition && app.rendered) app.setPosition(originalPosition);
 
-      // attachWindow changes the execution context's active document back to
-      // the primary Foundry workspace before resolving ui.sidebar.
+      // Reattach the host first so ui.sidebar is resolved in the primary
+      // Foundry document, not in the detached Electron window.
       await this.attachWindow();
-      hostAttachedToMain = !this.window?.windowId;
 
       mainSidebar = ui.sidebar;
       if (!(mainSidebar instanceof ApplicationV2)) {
         throw new Error("A Sidebar do workspace principal não está disponível como ApplicationV2.");
       }
       if (!mainSidebar.rendered) await mainSidebar.render({ force: true });
-      if (!this.element?.ownerDocument || mainSidebar.element?.ownerDocument !== this.element.ownerDocument) {
-        throw new Error("A Sidebar encontrada não pertence ao documento principal do Foundry.");
+      mainDocument = mainSidebar.element?.ownerDocument;
+      if (!mainDocument || this.element?.ownerDocument !== mainDocument) {
+        throw new Error("A janela Tabbed não foi reanexada ao documento principal do Foundry.");
       }
+      hostAttachedToMain = true;
+      this._setupLayoutObservers();
 
       workspaceAnchor = mainSidebar;
       await mainSidebar.renderChild(app);
@@ -905,7 +944,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       this.release(app.id, { restorePosition: true, closeWhenEmpty: false });
 
       if (this._tabbedApps.size > 0) {
-        await originalDetachWindow.call(this, {});
+        await this.detachWindow({});
         this._setupLayoutObservers();
         this._scheduleLayout();
       } else {
@@ -928,7 +967,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
         if (this.rendered && !this.window?.windowId) {
           if (this._tabbedApps.size > 0) {
             try {
-              await originalDetachWindow.call(this, {});
+              await this.detachWindow({});
               this._setupLayoutObservers();
               this._scheduleLayout();
             } catch (detachError) {
@@ -958,7 +997,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
       if (hostAttachedToMain && this.rendered && !this.window?.windowId) {
         try {
-          await originalDetachWindow.call(this, {});
+          await this.detachWindow({});
           this._setupLayoutObservers();
           this._scheduleLayout();
         } catch (detachError) {
@@ -1036,26 +1075,28 @@ async function getOrCreateHost() {
   }
 }
 
-async function captureApplication(app, options) {
+async function captureApplication(app, options, nativeDetach) {
   if (pendingCaptures.has(app)) return pendingCaptures.get(app);
 
+  let target = null;
   const promise = (async () => {
     try {
-      const target = await getOrCreateHost();
+      target = await getOrCreateHost();
       await target.adopt(app, options);
       return app;
     } catch (error) {
       console.error("[" + MODULE_ID + "] Falha ao agrupar aplicação; executando detach nativo.", error);
-      if (host && app.parent === host) return app;
-      if (host && host._tabbedApps?.size === 0) {
+      if (target && target._tabbedApps.has(app.id) && app.parent === target) return app;
+
+      if (target && target._tabbedApps.size === 0 && target.rendered) {
         try {
-          await host.close();
+          await target.close();
         } catch (closeError) {
           console.warn("[" + MODULE_ID + "] Não foi possível fechar a janela hospedeira vazia.", closeError);
         }
-        host = null;
+        if (host === target) host = null;
       }
-      return originalDetachWindow.call(app, options);
+      return nativeDetach();
     }
   })();
 
@@ -1067,40 +1108,98 @@ async function captureApplication(app, options) {
   }
 }
 
-/* Native detach interception intentionally removed in emergency safe mode. */
+function installDetachInterceptor() {
+  if (detachInterceptorInstalled) return true;
+
+  if (!game.modules.get("lib-wrapper")?.active || typeof libWrapper === "undefined") {
+    console.error("[" + MODULE_ID + "] libWrapper não está ativo. O destacamento nativo será preservado e o agrupamento permanecerá indisponível.");
+    return false;
+  }
+
+  try {
+    libWrapper.register(
+      MODULE_ID,
+      "foundry.applications.api.ApplicationV2.prototype.detachWindow",
+      function (wrapped, options = {}) {
+        const nativeDetach = () => wrapped(options);
+
+        // The host itself must always use Foundry's native detach behaviour.
+        if (this instanceof TabbedFoundryHost) return nativeDetach();
+
+        const parent = this.parent;
+
+        // A child detached from the Tabbed host must be removed from our layout
+        // only after Foundry successfully creates its native detached window.
+        if (parent instanceof TabbedFoundryHost) {
+          return parent._enqueueTransition(async () => {
+            if (this.parent !== parent) return nativeDetach();
+            parent.prepareForNativeDetach(this);
+            try {
+              const result = await nativeDetach();
+              parent.release(this.id, { restorePosition: false });
+              return result;
+            } catch (error) {
+              parent._detachingApps.delete(this.id);
+              parent._decorateChild(this);
+              parent._scheduleLayout();
+              throw error;
+            }
+          });
+        }
+
+        // A disabled setting, already-detached applications, and applications
+        // owned by another ApplicationV2 parent always retain native behaviour.
+        if (!isAutoGroupingEnabled()) return nativeDetach();
+        if (this.window?.windowId) return nativeDetach();
+        if (parent && parent !== workspaceAnchor) return nativeDetach();
+
+        return captureApplication(this, options, nativeDetach);
+      },
+      "MIXED"
+    );
+
+    detachInterceptorInstalled = true;
+    console.info("[" + MODULE_ID + "] Interceptação de detach registrada via libWrapper.");
+    return true;
+  } catch (error) {
+    console.error("[" + MODULE_ID + "] Não foi possível registrar a interceptação via libWrapper. O detach nativo será preservado.", error);
+    return false;
+  }
+}
 
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, SETTING_AUTO_GROUP, {
-    name: "Agrupar aplicações destacadas automaticamente (suspenso)",
-    hint: "O agrupamento automático está temporariamente suspenso por segurança. O Tabbed Foundry não interceptará ApplicationV2.detachWindow nesta versão; o Foundry manterá o comportamento nativo.",
+    name: "Agrupar aplicações destacadas automaticamente",
+    hint: "Quando ativado, aplicações ApplicationV2 destacadas do workspace principal são organizadas em abas na janela do Tabbed Foundry. Desative para manter o destacamento nativo do Foundry.",
     scope: "client",
     config: true,
     type: Boolean,
-    default: false
+    default: true
   });
+
+  installDetachInterceptor();
 });
 
 Hooks.once("ready", async () => {
-  // EMERGENCY SAFE MODE:
-  // Do not patch ApplicationV2.prototype.detachWindow. A previous build
-  // caused applications (notably Journal sheets) to become orphaned or
-  // remain attached to the detached Tabbed window after reattachment.
-  // A full Electron process restart is required to clear an older in-memory
-  // prototype patch; this build deliberately leaves the native method alone.
   try {
-    if (game.settings.get(MODULE_ID, SETTING_AUTO_GROUP) !== false) {
-      await game.settings.set(MODULE_ID, SETTING_AUTO_GROUP, false);
-    }
+    await getOrCreateWorkspaceAnchor();
   } catch (error) {
-    console.warn("[" + MODULE_ID + "] Não foi possível redefinir a opção de agrupamento.", error);
+    console.error("[" + MODULE_ID + "] Não foi possível preparar o ponto de retorno ao workspace principal.", error);
   }
 
   game.modules.get(MODULE_ID).api = {
     get host() { return host; },
-    get enabled() { return false; },
+    get workspaceAnchor() { return workspaceAnchor; },
+    get enabled() { return detachInterceptorInstalled && isAutoGroupingEnabled(); },
+    get detachInterceptorInstalled() { return detachInterceptorInstalled; },
     async closeHost() {
       if (host) await host.close();
     }
   };
-  console.warn("[" + MODULE_ID + "] MODO DE SEGURANÇA: agrupamento automático suspenso; detach nativo preservado.");
+
+  console.info(
+    "[" + MODULE_ID + "] Carregado. Agrupamento automático: " +
+    (isAutoGroupingEnabled() && detachInterceptorInstalled ? "ativado" : "desativado") +
+    "; interceptação via libWrapper: " + (detachInterceptorInstalled ? "instalada" : "indisponível") + "."
+  );
 });

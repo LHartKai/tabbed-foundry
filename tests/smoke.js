@@ -171,7 +171,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
 
   // Structural regression guards for previously observed failure modes.
   assert.match(source, /_enqueueTransition\(operation\)/, "state transitions are serialized");
-  assert.match(source, /await host\._transitionQueue/, "new captures wait for an active return transition");
+  assert.match(source, /await existingHost\._transitionQueue/, "new captures wait for an active return transition");
   assert.match(source, /_layoutFrameView/, "animation frames are cancelled against their originating Electron view");
   assert.match(source, /if \(hostAttachedToMain && this\.rendered && !this\.window\?\.windowId\)/, "failed reattachment restores the detached host");
   assert.doesNotMatch(source, /MODO DE SEGURANÇA|temporariamente suspenso/, "emergency safe mode is removed");

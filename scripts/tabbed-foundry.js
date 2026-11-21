@@ -82,6 +82,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     };
 
     this.addEventListener("close", () => {
+      this._removeReturnDropTarget();
       this._removeLayoutObservers();
       this._closeTabContextMenu();
       this._finishDragSession(false);
@@ -297,14 +298,6 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
     this.window?.header?.style.setProperty("pointer-events", "auto", "important");
     this.window?.resize?.style.setProperty("pointer-events", "auto", "important");
-    const returnDropHeader = this.window?.header ?? element.querySelector(":scope > .window-header");
-    if (returnDropHeader !== this._returnDropHeader) {
-      this._removeReturnDropTarget();
-      this._returnDropHeader = returnDropHeader ?? null;
-      this._returnDropHeader?.addEventListener("dragover", this._boundReturnDragOver);
-      this._returnDropHeader?.addEventListener("dragleave", this._boundReturnDragLeave);
-      this._returnDropHeader?.addEventListener("drop", this._boundReturnDrop);
-    }
     content.style.setProperty("pointer-events", "none", "important");
 
     if (this._observedView !== view) {
@@ -313,6 +306,13 @@ class TabbedFoundryHost extends HandlebarsApplication {
       view.addEventListener("resize", this._boundLayout);
     }
 
+    const returnDropHeader = this.window?.header ?? element.querySelector(":scope > .window-header");
+    if (returnDropHeader !== this._returnDropHeader) {
+        this._returnDropHeader = returnDropHeader ?? null;
+      this._returnDropHeader?.addEventListener("dragover", this._boundReturnDragOver);
+      this._returnDropHeader?.addEventListener("dragleave", this._boundReturnDragLeave);
+      this._returnDropHeader?.addEventListener("drop", this._boundReturnDrop);
+    }
     if (!this._resizeObserver && typeof view.ResizeObserver === "function") {
       this._resizeObserver = new view.ResizeObserver(this._boundLayout);
       this._resizeObserver.observe(content);

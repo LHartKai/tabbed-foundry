@@ -96,6 +96,13 @@ jobs:
           git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
+      - name: Validate module source
+        run: |
+          node --check scripts/tabbed-foundry.js
+          node -e "const m = JSON.parse(require('fs').readFileSync('module.json', 'utf8')); if (m.id !== 'tabbed-foundry') process.exit(1);"
+          test -f styles/tabbed-foundry.css
+          test -f templates/host.hbs
+
       - name: Package Foundry module
         run: |
           mkdir -p dist/tabbed-foundry

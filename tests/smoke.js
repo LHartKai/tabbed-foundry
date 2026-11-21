@@ -215,6 +215,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     "the native detach must sever the parent-child link before the host releases the app"
   );
   assert.ok(source.includes("await attachApplicationToMainWorkspace(app)"), "reattachment moves the selected app directly to the main workspace");
+  assert.doesNotMatch(source, /makeItem\("Voltar para o Foundry"/, "the tab context menu no longer offers the return-to-Foundry action");
   assert.doesNotMatch(source, /MODO DE SEGURANÇA|temporariamente suspenso/, "emergency safe mode is removed");
   assert.doesNotMatch(source, /ApplicationV2\.prototype\.detachWindow\s*=/, "direct prototype monkey-patching stays removed");
 

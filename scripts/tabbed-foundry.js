@@ -857,8 +857,6 @@ class TabbedFoundryHost extends HandlebarsApplication {
     };
 
     menu.append(
-      makeItem("Voltar para o Foundry", "fas fa-arrow-up-right-from-square",
-        "Reanexar à janela principal", () => this._returnApplicationToWorkspace(app)),
       makeItem("Destacar em janela própria", "fas fa-window-restore",
         "Abrir em uma janela externa nativa", () => this._detachApplicationToNativeWindow(app))
     );

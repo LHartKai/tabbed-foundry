@@ -31,6 +31,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
   constructor(options = {}) {
     super(options);
     this._tabbedApps = new Map();
+    this._childListeners = new Map();
     this._activeId = null;
     this._boundLayout = () => this._layoutChildren();
     this._resizeObserver = null;
@@ -77,8 +78,11 @@ class TabbedFoundryHost extends HandlebarsApplication {
     await this.renderChild(app, options);
 
     this._tabbedApps.set(app.id, app);
-    app.addEventListener("render", () => this._decorateChild(app));
-    app.addEventListener("close", () => this._onChildClosed(app.id));
+    const onRender = () => this._decorateChild(app);
+    const onClose = () => this._onChildClosed(app.id);
+    app.addEventListener("render", onRender);
+    app.addEventListener("close", onClose);
+    this._childListeners.set(app.id, { app, onRender, onClose });
 
     this._activeId = app.id;
     this._decorateChild(app);
@@ -161,6 +165,22 @@ class TabbedFoundryHost extends HandlebarsApplication {
   }
 
   release(id) {
+    const app = this._tabbedApps.get(id);
+    const listeners = this._childListeners.get(id);
+    if (listeners) {
+      listeners.app.removeEventListener("render", listeners.onRender);
+      listeners.app.removeEventListener("close", listeners.onClose);
+      this._childListeners.delete(id);
+    }
+    const element = app?.element;
+    if (element) {
+      element.classList.remove("tabbed-foundry-child", "tabbed-foundry-child-active");
+      element.hidden = false;
+      element.removeAttribute("aria-hidden");
+      for (const property of ["position", "left", "top", "width", "height", "z-index"]) {
+        element.style.removeProperty(property);
+      }
+    }
     this._tabbedApps.delete(id);
     if (this._activeId === id) {
       this._activeId = this._tabbedApps.keys().next().value ?? null;
@@ -257,7 +277,10 @@ function isAutoGroupingEnabled() {
 }
 
 async function getOrCreateHost() {
-  if (host?.rendered && host.window?.windowId) return host;
+  if (host?.rendered) {
+    if (!host.window?.windowId) await host.ensureDetachedWindow();
+    return host;
+  }
   if (hostCreation) return hostCreation;
 
   hostCreation = (async () => {
@@ -330,8 +353,8 @@ function installDetachInterceptor() {
 
   prototype.detachWindow = function(options = {}) {
     if (this instanceof TabbedFoundryHost) return originalDetachWindow.call(this, options);
-    if (!isAutoGroupingEnabled()) return originalDetachWindow.call(this, options);
 
+    // Um filho já agrupado deve sair da barra mesmo se o autoagrupamento foi desligado.
     if (host && this.parent === host) {
       const parentHost = host;
       return originalDetachWindow.call(this, options).then((result) => {
@@ -340,6 +363,10 @@ function installDetachInterceptor() {
       });
     }
 
+    // Configuração desligada: não interceptar o detach nativo.
+    if (!isAutoGroupingEnabled()) return originalDetachWindow.call(this, options);
+
+    // Não sequestrar aplicações já destacadas ou filhas de outra aplicação.
     if (this.window?.windowId || this.parent) return originalDetachWindow.call(this, options);
     return captureApplication(this, options);
   };

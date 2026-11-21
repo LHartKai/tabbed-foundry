@@ -1363,6 +1363,7 @@ function installDetachInterceptor() {
               // and cascade a close into the just-detached application.
               rememberTabbedDetach(this);
               parent.release(this.id, { restorePosition: false, closeWhenEmpty: false });
+              installExternalApplicationDrag(this);
               return result;
             } catch (error) {
               parent._detachingApps.delete(this.id);

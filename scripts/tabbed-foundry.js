@@ -339,6 +339,10 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._renderTabStrip();
   }
 
+  acceptDraggedTabDrop() {
+    if (this._dragSession) this._dragSession.accepted = true;
+  }
+
   _showTabContextMenu(event, app) {
     this._closeTabContextMenu();
     const doc = this.element?.ownerDocument;
@@ -447,6 +451,24 @@ function isAutoGroupingEnabled() {
   } catch (error) {
     console.warn(`[${MODULE_ID}] Não foi possível ler a configuração; usando detach nativo.`, error);
     return false;
+  }
+}
+
+async function getOrCreateWorkspaceAnchor() {
+  if (workspaceAnchor?.rendered) return workspaceAnchor;
+  if (workspaceAnchorCreation) return workspaceAnchorCreation;
+
+  workspaceAnchorCreation = (async () => {
+    const candidate = new TabbedFoundryWorkspaceAnchor();
+    await candidate.render({ force: true });
+    workspaceAnchor = candidate;
+    return candidate;
+  })();
+
+  try {
+    return await workspaceAnchorCreation;
+  } finally {
+    workspaceAnchorCreation = null;
   }
 }
 

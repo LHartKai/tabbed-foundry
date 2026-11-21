@@ -599,10 +599,19 @@ Hooks.once("init", () => {
   });
 });
 
-Hooks.once("ready", () => {
+Hooks.once("ready", async () => {
   installDetachInterceptor();
+  try {
+    // Create the anchor in the primary Foundry document before any detached
+    // Tabbed window can request that an application be returned to it.
+    await getOrCreateWorkspaceAnchor();
+  } catch (error) {
+    console.error(`[${MODULE_ID}] Não foi possível preparar o ponto de retorno ao workspace principal.`, error);
+  }
+
   game.modules.get(MODULE_ID).api = {
     get host() { return host; },
+    get workspaceAnchor() { return workspaceAnchor; },
     get enabled() { return isAutoGroupingEnabled(); },
     async closeHost() {
       if (host) await host.close();

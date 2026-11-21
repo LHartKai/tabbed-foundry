@@ -45,6 +45,10 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
       once(name, callback) {
         if (!hooks.has(name)) hooks.set(name, []);
         hooks.get(name).push(callback);
+      },
+      on(name, callback) {
+        if (!hooks.has(name)) hooks.set(name, []);
+        hooks.get(name).push(callback);
       }
     },
     game: {

@@ -12,7 +12,7 @@
     "minimum": "14",
     "verified": "14"
   },
-  "manifest": "https://github.com/LHartKai/tabbed-foundry/releases/latest/download/module.json",
+  "manifest": "https://raw.githubusercontent.com/LHartKai/tabbed-foundry/main/module.json",
   "download": "https://github.com/LHartKai/tabbed-foundry/releases/latest/download/tabbed-foundry.zip",
   "esmodules": [
     "scripts/tabbed-foundry.js"

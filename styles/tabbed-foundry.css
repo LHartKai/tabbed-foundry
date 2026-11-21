@@ -1,34 +1,46 @@
-.tabbed-foundry-host .window-content {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+/* The host owns one detached Foundry window. Children remain registered via
+   ApplicationV2.renderChild and are positioned over the host content area. */
+.tabbed-foundry-host {
+  z-index: 100000 !important;
+  background: transparent !important;
 }
 
-.tabbed-foundry-shell {
-  display: flex;
-  flex: 1;
+.tabbed-foundry-host > .window-content {
+  position: relative;
+  display: block;
   min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent !important;
+}
+
+.tabbed-foundry-host .tabbed-foundry-shell {
+  position: absolute;
+  inset: 0;
+  z-index: 100001;
+  display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  pointer-events: none;
 }
 
 .tabbed-foundry-tabs {
-  position: relative;
-  z-index: 2;
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 0 2.8rem;
   align-items: stretch;
   gap: 0.25rem;
-  min-height: 2.5rem;
+  min-width: 0;
   overflow-x: auto;
   border-bottom: 1px solid var(--color-border-light-primary, #777);
+  background: var(--background-color, rgba(0, 0, 0, 0.16));
+  pointer-events: auto;
 }
 
 .tabbed-foundry-tab {
   display: flex;
-  align-items: center;
-  max-width: 16rem;
+  flex: 0 1 auto;
+  align-items: stretch;
+  min-width: 5rem;
+  max-width: 18rem;
   border: 1px solid var(--color-border-light-tertiary, #555);
   border-bottom: 0;
   border-radius: 5px 5px 0 0;
@@ -49,57 +61,60 @@
 
 .tabbed-foundry-tab-label {
   overflow: hidden;
+  flex: 1 1 auto;
   padding: 0.5rem 0.65rem;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tabbed-foundry-tab-close {
+  flex: 0 0 auto;
   padding: 0.35rem 0.55rem;
   font-size: 1.1rem;
 }
 
 .tabbed-foundry-empty {
-  align-self: center;
-  padding: 0.5rem;
+  margin: auto;
+  padding: 0.75rem;
   opacity: 0.7;
   font-style: italic;
+  pointer-events: none;
 }
 
-.tabbed-foundry-stage {
-  flex: 1 1 auto;
-  min-height: 0;
+.tabbed-foundry-empty[hidden] {
+  display: none !important;
 }
 
-/*
- * ApplicationV2.renderChild keeps child applications in the host window.
- * Their elements are styled in place; they are never manually re-parented.
- * The host titlebar and tab strip remain visible above the active child.
- */
+/* Child frames are presented as tab content. Their header is replaced by the
+   host's tab strip; the original application DOM and lifecycle are preserved. */
 .tabbed-foundry-child {
-  position: fixed !important;
-  inset: 5rem 0 0 0 !important;
-  width: auto !important;
-  height: auto !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
   max-width: none !important;
   max-height: none !important;
   min-width: 0 !important;
   min-height: 0 !important;
+  overflow: hidden !important;
   transform: none !important;
-  z-index: 9999 !important;
-}
-
-.tabbed-foundry-child > .window-header {
-  display: none !important;
-}
-
-.tabbed-foundry-child > .window-content {
-  width: 100% !important;
-  height: 100% !important;
-  max-height: none !important;
-  overflow: auto;
+  z-index: 99999 !important;
 }
 
 .tabbed-foundry-child[hidden] {
   display: none !important;
+}
+
+.tabbed-foundry-child .window-header {
+  display: none !important;
+}
+
+.tabbed-foundry-child .window-content {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  min-height: 0;
+  overflow: auto;
 }

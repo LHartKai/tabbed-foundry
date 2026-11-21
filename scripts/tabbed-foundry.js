@@ -142,7 +142,13 @@ class TabbedFoundryHost extends HandlebarsApplication {
       this._scheduleLayout();
     };
     const onPosition = () => this._scheduleLayout();
-    const onClose = () => this.release(app.id);
+    const onClose = () => {
+      // Foundry may emit the close lifecycle while a child is being moved to
+      // its own native window. Let the detach wrapper finish the transition;
+      // releasing here would close an empty host before the new window settles.
+      if (this._detachingApps.has(app.id)) return;
+      this.release(app.id);
+    };
 
     app.addEventListener("render", onRender);
     app.addEventListener("position", onPosition);
@@ -1159,6 +1165,16 @@ function installDetachInterceptor() {
             parent.prepareForNativeDetach(this);
             try {
               const result = await nativeDetach();
+
+              // Foundry v14 promises to break the parent link when a managed
+              // child detaches. Do not release the tab or close its host if
+              // that relationship is still present after the native call.
+              if (this.parent === parent || parent.children?.get(this.id) === this) {
+                throw new Error(
+                  "O Foundry concluiu detachWindow sem remover o vínculo com a janela Tabbed."
+                );
+              }
+
               parent.release(this.id, { restorePosition: false });
               return result;
             } catch (error) {

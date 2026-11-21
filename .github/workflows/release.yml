@@ -106,11 +106,6 @@ jobs:
             git push origin "HEAD:${{ github.ref_name }}"
           fi
 
-      - name: Create and push version tag
-        run: |
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
-
       - name: Validate module and smoke tests
         run: |
           node --check scripts/tabbed-foundry.js
@@ -142,10 +137,12 @@ jobs:
             NOTES_ARGS+=(--prerelease)
           fi
 
+          TARGET=$(git rev-parse HEAD)
           gh release create "$TAG" \
             "tabbed-foundry.zip" \
             "release-module.json#module.json" \
             --title "Tabbed Foundry $TAG" \
+            --target "$TARGET" \
             --generate-notes \
             "${NOTES_ARGS[@]}"
 

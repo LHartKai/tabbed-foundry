@@ -1,7 +1,7 @@
 {
   "id": "tabbed-foundry",
   "title": "Tabbed Foundry",
-  "description": "Agrupa aplicações destacadas do Foundry VTT em uma única janela com abas.",
+  "description": "Modo de segurança: preserva o destacamento nativo do Foundry enquanto a integração de janelas é revisada.",
   "version": "1.2.4",
   "authors": [
     {

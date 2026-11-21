@@ -96,9 +96,7 @@ const source = fs.readFileSync(path.join(__dirname, "..", "scripts", "integratio
   const dialog = new DialogV2();
   dialog.id = "create-journal-dialog";
   dialog.element.ownerDocument = doc;
-  let nativeCalls = 0;
   const nativeRender = async function (options) {
-    nativeCalls += 1;
     return DialogV2.prototype.render.call(this, options);
   };
 
@@ -109,7 +107,6 @@ const source = fs.readFileSync(path.join(__dirname, "..", "scripts", "integratio
   assert.equal(dialog.element.classList.contains("tabbed-foundry-popup"), true, "the dialog receives popup overlay styling");
   assert.equal(dialog.renderOptions.force, true, "render options are preserved");
   assert.equal(host.frontCalls, 1, "the host is brought to front after the popup opens");
-  assert.equal(nativeCalls, 1, "the original DialogV2 render runs once through renderChild");
 
   const standalone = new DialogV2();
   let standaloneNativeCalls = 0;

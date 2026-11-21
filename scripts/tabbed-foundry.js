@@ -733,7 +733,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     schedule(() => check(0), 0);
   }
 
-  release(id, { restorePosition = true } = {}) {
+  release(id, { restorePosition = true, closeWhenEmpty = true } = {}) {
     const app = this._tabbedApps.get(id);
     if (!app) return;
 
@@ -760,7 +760,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     if (restorePosition && originalPosition && app.rendered) app.setPosition(originalPosition);
     this._renderWorkspace();
     this._scheduleLayout();
-    this._closeWhenEmpty();
+    if (closeWhenEmpty) this._closeWhenEmpty();
   }
 
   _applyOptionalIntegrations(app) {
@@ -861,14 +861,108 @@ class TabbedFoundryHost extends HandlebarsApplication {
   }
 
   async _returnApplicationToWorkspace(app) {
-    if (!this._tabbedApps.has(app.id)) return;
-    const mainWorkspace = await getOrCreateWorkspaceAnchor();
-    if (!(mainWorkspace instanceof ApplicationV2)) {
-      throw new Error("A Sidebar principal do Foundry não está disponível como ApplicationV2.");
+    if (!this._tabbedApps.has(app.id)) return app;
+    if (app.parent !== this) {
+      throw new Error("A aplicação não está mais vinculada à janela Tabbed Foundry.");
     }
-    await mainWorkspace.renderChild(app);
-    this.release(app.id);
-    app.bringToFront();
+
+    const tabbedHost = this;
+    const originalPosition = this._originalPositions.get(app.id);
+    let mainSidebar = null;
+    let hostAttachedToMain = false;
+    let appMovedToMain = false;
+
+    try {
+      // Clear the tab-specific geometry before moving the host. The host
+      // itself must first reattach so ui.sidebar resolves in the primary
+      // Foundry window, not in the detached Tabbed window.
+      this._clearChildPresentation(app);
+      if (originalPosition && app.rendered) app.setPosition(originalPosition);
+
+      await this.attachWindow();
+      hostAttachedToMain = !this.window?.windowId;
+
+      mainSidebar = ui.sidebar;
+      if (!(mainSidebar instanceof ApplicationV2)) {
+        throw new Error("A Sidebar do workspace principal não está disponível como ApplicationV2.");
+      }
+      if (!this.element?.ownerDocument || mainSidebar.element?.ownerDocument !== this.element.ownerDocument) {
+        throw new Error("A Sidebar encontrada não pertence ao documento principal do Foundry.");
+      }
+
+      workspaceAnchor = mainSidebar;
+      await mainSidebar.renderChild(app);
+      if (app.parent !== mainSidebar) {
+        throw new Error("O Foundry não confirmou a transferência para a Sidebar principal.");
+      }
+      appMovedToMain = true;
+
+      // Remove only the selected application. Do not close the host yet:
+      // remaining children need the host to be detached back into its own window.
+      this.release(app.id, { restorePosition: true, closeWhenEmpty: false });
+
+      if (this._tabbedApps.size > 0) {
+        await originalDetachWindow.call(this, {});
+        this._setupLayoutObservers();
+        this._scheduleLayout();
+      } else {
+        await this.close();
+      }
+
+      mainSidebar.bringToFront();
+      app.bringToFront();
+      return app;
+    } catch (error) {
+      console.error("[" + MODULE_ID + "] Falha ao devolver aplicação ao workspace principal.", error);
+
+      if (appMovedToMain || (mainSidebar && app.parent === mainSidebar)) {
+        // The application is already in the main Foundry window. Keep that
+        // success even if the remaining Tabbed window could not be detached.
+        if (this._tabbedApps.has(app.id)) {
+          this.release(app.id, { restorePosition: true, closeWhenEmpty: false });
+        }
+        if (this.rendered && !this.window?.windowId) {
+          if (this._tabbedApps.size > 0) {
+            try {
+              await originalDetachWindow.call(this, {});
+              this._setupLayoutObservers();
+              this._scheduleLayout();
+            } catch (detachError) {
+              console.error("[" + MODULE_ID + "] A aplicação voltou ao Foundry, mas a janela Tabbed não conseguiu voltar a destacar.", detachError);
+            }
+          } else {
+            await this.close();
+          }
+        }
+        ui.notifications?.warn("A aplicação voltou ao Foundry, mas a janela Tabbed precisou permanecer aberta.");
+        return app;
+      }
+
+      // Roll back to the Tabbed host if the transfer did not reach the main
+      // Sidebar. The current pane tree and tab identity are preserved.
+      try {
+        if (app.parent !== this) await this.renderChild(app);
+        if (!this._tabbedApps.has(app.id)) {
+          this._tabbedApps.set(app.id, app);
+          this._insertIntoActivePane(app.id);
+        }
+        this._decorateChild(app);
+        this._renderWorkspace();
+      } catch (rollbackError) {
+        console.error("[" + MODULE_ID + "] Falha ao restaurar a aplicação no Tabbed Foundry.", rollbackError);
+      }
+
+      if (hostAttachedToMain && this.rendered && !this.window?.windowId) {
+        try {
+          await originalDetachWindow.call(this, {});
+          this._setupLayoutObservers();
+          this._scheduleLayout();
+        } catch (detachError) {
+          console.error("[" + MODULE_ID + "] Não foi possível restaurar a janela externa do Tabbed Foundry.", detachError);
+        }
+      }
+      throw error;
+    }
   }
 
   async _detachApplicationToNativeWindow(app) {

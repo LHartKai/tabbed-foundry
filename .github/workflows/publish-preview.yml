@@ -53,7 +53,6 @@ jobs:
       - name: Create prerelease tag and GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ fromJSON('"${{ github.sha }}"') }}
           REPOSITORY: ${{ github.repository }}
         run: |
           TAG="v$(node -p "require('./module.json').version")"

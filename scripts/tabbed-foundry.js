@@ -267,6 +267,9 @@ class TabbedFoundryHost extends HandlebarsApplication {
     if (!this._childResizeObserver && typeof view.ResizeObserver === "function") {
       this._childResizeObserver = new view.ResizeObserver(() => this._scheduleLayout());
     }
+    // The host can move to a different Electron document when it is detached.
+    // Re-observe existing children with the ResizeObserver from that document.
+    for (const app of this._tabbedApps.values()) this._observeChild(app);
   }
 
   _observeChild(app) {
@@ -494,7 +497,10 @@ class TabbedFoundryHost extends HandlebarsApplication {
   }
 
   _applySplitRatio(node, split, first, second) {
-    const ratio = Math.max(0.18, Math.min(0.82, node.ratio));
+    const bounds = split.getBoundingClientRect();
+    const size = node.direction === "horizontal" ? bounds.width : bounds.height;
+    const minRatio = size > 0 ? Math.min(0.5, 180 / size) : 0.18;
+    const ratio = Math.max(minRatio, Math.min(1 - minRatio, node.ratio));
     node.ratio = ratio;
     first.style.flex = ratio + " 1 0px";
     second.style.flex = (1 - ratio) + " 1 0px";
@@ -517,7 +523,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     const onMove = (moveEvent) => {
       const coordinate = horizontal ? moveEvent.clientX - bounds.left : moveEvent.clientY - bounds.top;
       const rawRatio = coordinate / size;
-      const minRatio = Math.min(0.18, 180 / size);
+      const minRatio = Math.min(0.5, 180 / size);
       node.ratio = Math.max(minRatio, Math.min(1 - minRatio, rawRatio));
       this._applySplitRatio(node, split, first, second);
       this._scheduleLayout();

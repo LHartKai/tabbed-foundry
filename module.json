@@ -1,8 +1,8 @@
 {
   "id": "tabbed-foundry",
   "title": "Tabbed Foundry",
-  "description": "Modo de segurança: preserva o destacamento nativo do Foundry enquanto a integração de janelas é revisada.",
-  "version": "1.2.7",
+  "description": "Organiza aplicações ApplicationV2 destacadas em abas e painéis divididos numa única janela externa.",
+  "version": "1.3.0-beta.1",
   "authors": [
     {
       "name": "LHartKai"
@@ -10,10 +10,21 @@
   ],
   "compatibility": {
     "minimum": "14",
-    "verified": "14"
+    "verified": "14.365"
   },
+  "relationships": {
+    "requires": [
+      {
+        "id": "lib-wrapper",
+        "type": "module",
+        "manifest": "https://github.com/ruipin/fvtt-lib-wrapper/releases/latest/download/module.json",
+        "compatibility": {}
+      }
+    ]
+  },
+  "url": "https://github.com/LHartKai/tabbed-foundry",
   "manifest": "https://raw.githubusercontent.com/LHartKai/tabbed-foundry/main/module.json",
-  "download": "https://github.com/LHartKai/tabbed-foundry/releases/latest/download/tabbed-foundry.zip",
+  "download": "https://github.com/LHartKai/tabbed-foundry/releases/download/v1.3.0-beta.1/tabbed-foundry.zip",
   "esmodules": [
     "scripts/tabbed-foundry.js"
   ],

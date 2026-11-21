@@ -13,6 +13,48 @@ const detachedFromTabbedApps = new WeakSet();
 const patchedMejCloseRoots = new WeakSet();
 let attachInterceptorInstalled = false;
 
+const externalDragApplications = new WeakSet();
+
+function findApplicationById(appId) {
+  const windows = ui?.windows;
+  const direct = windows?.get?.(appId) ?? windows?.[appId];
+  if (direct) return direct;
+  return Object.values(windows ?? {}).find(app => app?.id === appId) ?? null;
+}
+
+function installExternalApplicationDrag(app) {
+  if (!(app instanceof ApplicationV2) || app instanceof TabbedFoundryHost) return false;
+  if (!app.window?.windowId || app.parent instanceof TabbedFoundryHost) return false;
+  if (app.parent && app.parent !== workspaceAnchor) return false;
+  if (externalDragApplications.has(app)) return true;
+
+  const header = app.window?.header ?? app.element?.querySelector(":scope > .window-header");
+  if (!header) return false;
+
+  header.draggable = true;
+  header.addEventListener("dragstart", (event) => {
+    if (app.parent instanceof TabbedFoundryHost || !app.window?.windowId) {
+      event.preventDefault();
+      return;
+    }
+    if (event.target?.closest?.("button, a, input, select, textarea, [data-action]")) {
+      event.preventDefault();
+      return;
+    }
+    const transfer = event.dataTransfer;
+    if (!transfer) {
+      event.preventDefault();
+      return;
+    }
+    transfer.setData("application/x-tabbed-foundry-app", app.id);
+    transfer.setData("text/plain", app.id);
+    transfer.effectAllowed = "move";
+  }, true);
+
+  externalDragApplications.add(app);
+  return true;
+}
+
 class TabbedFoundryHost extends HandlebarsApplication {
   static DEFAULT_OPTIONS = {
     id: "tabbed-foundry-host",
@@ -55,34 +97,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._dividerCleanup = null;
     this._transitionQueue = Promise.resolve();
     this._detachingHostPromise = null;
-    this._workspaceReturnDropTarget = null;
-    this._boundWorkspaceReturnDragOver = (event) => {
-      if (!this._dragSession?.app || !this._tabbedApps.has(this._dragSession.app.id)) return;
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-      this._workspaceReturnDropTarget?.classList.add("tabbed-foundry-workspace-return-drop-active");
-    };
-    this._boundWorkspaceReturnDragLeave = (event) => {
-      if (!this._workspaceReturnDropTarget?.contains(event.relatedTarget)) {
-        this._workspaceReturnDropTarget?.classList.remove("tabbed-foundry-workspace-return-drop-active");
-      }
-    };
-    this._boundWorkspaceReturnDrop = (event) => {
-      const appId = this._draggedAppId(event);
-      const app = appId ? this._tabbedApps.get(appId) : null;
-      if (!app || app.parent !== this) return;
-      event.preventDefault();
-      event.stopPropagation();
-      this._workspaceReturnDropTarget?.classList.remove("tabbed-foundry-workspace-return-drop-active");
-      this._finishDragSession(true);
-      this._returnApplicationToWorkspace(app).catch(error => {
-        console.error("[" + MODULE_ID + "] Não foi possível devolver a aplicação ao workspace principal.", error);
-        ui.notifications?.warn("Não foi possível devolver a aplicação ao Foundry.");
-      });
-    };
-
     this.addEventListener("close", () => {
-      this._removeWorkspaceReturnDropTarget();
       this._removeLayoutObservers();
       this._closeTabContextMenu();
       this._finishDragSession(false);
@@ -306,7 +321,6 @@ class TabbedFoundryHost extends HandlebarsApplication {
       view.addEventListener("resize", this._boundLayout);
     }
 
-    this._setupWorkspaceReturnDropTarget();
     if (!this._resizeObserver && typeof view.ResizeObserver === "function") {
       this._resizeObserver = new view.ResizeObserver(this._boundLayout);
       this._resizeObserver.observe(content);
@@ -329,37 +343,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._observedChildren.set(app.id, element);
   }
 
-  _setupWorkspaceReturnDropTarget() {
-    const mainSidebar = ui.sidebar instanceof ApplicationV2 ? ui.sidebar : workspaceAnchor;
-    const sidebarElement = mainSidebar?.element;
-    if (!sidebarElement) return;
-
-    // Sidebar's native navigation is the return destination. Listening on the
-    // main Foundry document is important: the Tabbed host itself lives in a
-    // detached document, so a drop on the native sidebar must be handled there.
-    const selector = "#sidebar-tabs, .sidebar-tabs, nav.tabs[data-group='primary'], nav.tabs, .tabs[data-group='primary'], .tabs";
-    const target = sidebarElement.matches?.(selector) ? sidebarElement : sidebarElement.querySelector(selector);
-    if (!target || target === this._workspaceReturnDropTarget) return;
-
-    this._removeWorkspaceReturnDropTarget();
-    this._workspaceReturnDropTarget = target;
-    target.addEventListener("dragover", this._boundWorkspaceReturnDragOver, true);
-    target.addEventListener("dragleave", this._boundWorkspaceReturnDragLeave, true);
-    target.addEventListener("drop", this._boundWorkspaceReturnDrop, true);
-  }
-
-  _removeWorkspaceReturnDropTarget() {
-    const target = this._workspaceReturnDropTarget;
-    if (!target) return;
-    target.removeEventListener("dragover", this._boundWorkspaceReturnDragOver, true);
-    target.removeEventListener("dragleave", this._boundWorkspaceReturnDragLeave, true);
-    target.removeEventListener("drop", this._boundWorkspaceReturnDrop, true);
-    target.classList.remove("tabbed-foundry-workspace-return-drop-active");
-    this._workspaceReturnDropTarget = null;
-  }
-
   _removeLayoutObservers() {
-    this._removeWorkspaceReturnDropTarget();
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._childResizeObserver?.disconnect();
@@ -442,6 +426,29 @@ class TabbedFoundryHost extends HandlebarsApplication {
       const tabs = doc.createElement("nav");
       tabs.className = "tabbed-foundry-pane-tabs";
       tabs.setAttribute("aria-label", "Abas do painel");
+      tabs.addEventListener("dragover", (event) => {
+        const draggedId = this._draggedAppId(event);
+        if (!draggedId || !this._canAcceptDraggedApplication(draggedId) || event.target?.closest?.(".tabbed-foundry-tab")) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        tabs.classList.add("drag-over");
+      });
+      tabs.addEventListener("dragleave", (event) => {
+        if (!tabs.contains(event.relatedTarget)) tabs.classList.remove("drag-over");
+      });
+      tabs.addEventListener("drop", (event) => {
+        const draggedId = this._draggedAppId(event);
+        if (!draggedId || !this._canAcceptDraggedApplication(draggedId) || event.target?.closest?.(".tabbed-foundry-tab")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        tabs.classList.remove("drag-over");
+        if (this._tabbedApps.has(draggedId)) {
+          this._finishDragSession(true);
+          this._dropOnTabStrip(draggedId, node.id);
+        } else {
+          this._adoptDraggedApplication(draggedId, node.id);
+        }
+      });
       // Dropping on the empty part of the tab strip means append/reorder in this pane,
       // not detach the application into a separate native window.
       tabs.addEventListener("dragover", (event) => {
@@ -487,7 +494,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
         });
         tab.addEventListener("dragover", (event) => {
           const draggedId = this._draggedAppId(event);
-          if (!draggedId || draggedId === appId) return;
+          if (!draggedId || draggedId === appId || !this._canAcceptDraggedApplication(draggedId)) return;
           event.preventDefault();
           if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
           const dropZone = this._tabDropZone(event, tab);
@@ -501,8 +508,12 @@ class TabbedFoundryHost extends HandlebarsApplication {
           event.stopPropagation();
           delete tab.dataset.dropPreview;
           const draggedId = this._draggedAppId(event);
-          if (!draggedId || draggedId === appId) return;
+          if (!draggedId || draggedId === appId || !this._canAcceptDraggedApplication(draggedId)) return;
           const dropZone = this._tabDropZone(event, tab);
+          if (!this._tabbedApps.has(draggedId)) {
+            this._adoptDraggedApplication(draggedId, node.id, appId);
+            return;
+          }
           this._finishDragSession(true);
           if (dropZone === "left" || dropZone === "right") {
             this._splitPaneWithApplication(draggedId, node.id, dropZone);
@@ -685,6 +696,31 @@ class TabbedFoundryHost extends HandlebarsApplication {
       event.dataTransfer?.getData("text/plain") ||
       this._dragSession?.app?.id ||
       null;
+  }
+
+  _canAcceptDraggedApplication(appId) {
+    if (this._tabbedApps.has(appId)) return true;
+    const app = findApplicationById(appId);
+    return app instanceof ApplicationV2 &&
+      app !== this &&
+      !(app.parent instanceof TabbedFoundryHost) &&
+      (!app.parent || app.parent === workspaceAnchor);
+  }
+
+  _adoptDraggedApplication(appId, targetPaneId, targetAppId = null) {
+    const app = findApplicationById(appId);
+    if (!(app instanceof ApplicationV2) || app === this || this._tabbedApps.has(appId)) return;
+    if (app.parent instanceof TabbedFoundryHost || (app.parent && app.parent !== workspaceAnchor)) return;
+
+    this._enqueueTransition(async () => {
+      await this._adoptApplication(app);
+      if (targetAppId) this._dropOnTab(appId, targetPaneId, targetAppId);
+      else this._dropOnTabStrip(appId, targetPaneId);
+      this.bringToFront();
+    }).catch(error => {
+      console.error("[" + MODULE_ID + "] Não foi possível incorporar a aplicação destacada ao Tabbed Foundry.", error);
+      ui.notifications?.warn("Não foi possível adicionar esta janela ao Tabbed Foundry.");
+    });
   }
 
   _finishDragSession(accepted) {
@@ -1372,7 +1408,11 @@ Hooks.once("init", () => {
 
   installDetachInterceptor();
   installAttachInterceptor();
-});
+  Hooks.on("renderApplicationV2", (app) => installExternalApplicationDrag(app));
+  Hooks.on("openDetachedWindow", () => {
+    const windows = Object.values(ui?.windows ?? {});
+    for (const app of windows) installExternalApplicationDrag(app);
+  });
 
 Hooks.once("ready", async () => {
   try {

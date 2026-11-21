@@ -2,7 +2,7 @@
 
 Módulo experimental para Foundry VTT v14 que organiza aplicações `ApplicationV2` destacadas em uma janela externa única, com abas e painéis divididos.
 
-> **Prévia de desenvolvimento — v1.3.2-beta.1.** Esta versão mantém o agrupamento baseado em libWrapper e incorpora uma integração opcional de compatibilidade para Monk's Enhanced Journal 14.02. Ainda precisa de validação no Foundry Desktop v14.365 antes de ser considerada estável.
+> **Prévia integrada — v1.3.3-beta.1.** Esta versão mantém o agrupamento baseado em libWrapper e incorpora uma integração opcional de compatibilidade para Monk's Enhanced Journal 14.02. Inclui a proteção do ciclo de desanexação nativa e ainda precisa de validação no Foundry Desktop v14.365.
 
 ## Funcionalidades
 

@@ -873,12 +873,14 @@ class TabbedFoundryHost extends HandlebarsApplication {
     let appMovedToMain = false;
 
     try {
-      // Clear the tab-specific geometry before moving the host. The host
-      // itself must first reattach so ui.sidebar resolves in the primary
-      // Foundry window, not in the detached Tabbed window.
+      // Keep the host layout engine from repositioning this child while
+      // the host is temporarily attached to the primary workspace.
+      this._detachingApps.add(app.id);
       this._clearChildPresentation(app);
       if (originalPosition && app.rendered) app.setPosition(originalPosition);
 
+      // attachWindow changes the execution context's active document back to
+      // the primary Foundry workspace before resolving ui.sidebar.
       await this.attachWindow();
       hostAttachedToMain = !this.window?.windowId;
 
@@ -886,6 +888,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       if (!(mainSidebar instanceof ApplicationV2)) {
         throw new Error("A Sidebar do workspace principal não está disponível como ApplicationV2.");
       }
+      if (!mainSidebar.rendered) await mainSidebar.render({ force: true });
       if (!this.element?.ownerDocument || mainSidebar.element?.ownerDocument !== this.element.ownerDocument) {
         throw new Error("A Sidebar encontrada não pertence ao documento principal do Foundry.");
       }
@@ -913,6 +916,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       app.bringToFront();
       return app;
     } catch (error) {
+      this._detachingApps.delete(app.id);
       console.error("[" + MODULE_ID + "] Falha ao devolver aplicação ao workspace principal.", error);
 
       if (appMovedToMain || (mainSidebar && app.parent === mainSidebar)) {

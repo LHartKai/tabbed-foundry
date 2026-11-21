@@ -5,6 +5,8 @@ const vm = require("node:vm");
 
 const sourcePath = path.join(__dirname, "..", "scripts", "tabbed-foundry.js");
 const source = fs.readFileSync(sourcePath, "utf8");
+const stylesheetPath = path.join(__dirname, "..", "styles", "tabbed-foundry.css");
+const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
 
 async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   const hooks = new Map();
@@ -186,6 +188,15 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /if \(hostAttachedToMain && this\.rendered && !this\.window\?\.windowId\)/, "failed reattachment restores the detached host");
   assert.doesNotMatch(source, /MODO DE SEGURANÇA|temporariamente suspenso/, "emergency safe mode is removed");
   assert.doesNotMatch(source, /ApplicationV2\.prototype\.detachWindow\s*=/, "direct prototype monkey-patching stays removed");
+
+  assert.ok(
+    source.includes("parent.release(this.id, { restorePosition: false, closeWhenEmpty: false })"),
+    "a native detach must not auto-close its host while Foundry is transferring the child window"
+  );
+  assert.ok(
+    stylesheet.includes(".tabbed-foundry-child {\n  /* The child inherits pointer-events:none from the transparent host surface. */\n  pointer-events: auto !important;"),
+    "interactive child applications must restore pointer events inside the transparent host"
+  );
 
   console.log("Tabbed Foundry smoke tests passed.");
 })().catch(error => {

@@ -1175,7 +1175,10 @@ function installDetachInterceptor() {
                 );
               }
 
-              parent.release(this.id, { restorePosition: false });
+              // Keep the detached host alive after a child receives its own native
+              // window. Closing the host here can race Foundry's window transfer
+              // and cascade a close into the just-detached application.
+              parent.release(this.id, { restorePosition: false, closeWhenEmpty: false });
               return result;
             } catch (error) {
               parent._detachingApps.delete(this.id);

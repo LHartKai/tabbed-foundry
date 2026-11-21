@@ -275,6 +275,8 @@
 }
 
 .tabbed-foundry-child {
+  /* The child inherits pointer-events:none from the transparent host surface. */
+  pointer-events: auto !important;
   box-sizing: border-box !important;
   margin: 0 !important;
   max-width: none !important;

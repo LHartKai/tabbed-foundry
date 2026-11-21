@@ -8,7 +8,6 @@ const POPUP_CLASS = "tabbed-foundry-popup";
 const DialogV2 = foundry.applications.api.DialogV2;
 const popupRenderBypass = new WeakSet();
 const boundDocuments = new WeakMap();
-const documentBindings = new Set();
 let activePopupCapture = null;
 let popupCaptureInstalled = false;
 
@@ -71,9 +70,7 @@ function bindHostDocument(targetHost, doc) {
   };
 
   doc.addEventListener("click", listener, true);
-  const binding = { host: targetHost, listener };
-  boundDocuments.set(doc, binding);
-  documentBindings.add({ doc, binding });
+  boundDocuments.set(doc, { host: targetHost, listener });
 }
 
 function unbindDetachedDocument(win) {
@@ -83,12 +80,6 @@ function unbindDetachedDocument(win) {
   if (!binding) return;
   doc.removeEventListener("click", binding.listener, true);
   boundDocuments.delete(doc);
-  for (const entry of documentBindings) {
-    if (entry.doc === doc) {
-      documentBindings.delete(entry);
-      break;
-    }
-  }
 }
 
 function normalizeRenderOptions(options, legacyOptions) {
@@ -151,13 +142,20 @@ function installPopupCapture() {
       },
       "WRAPPER"
     );
+    popupCaptureInstalled = true;
+  } catch (error) {
+    console.error("[" + MODULE_ID + "] Não foi possível instalar a captura de DialogV2; o comportamento nativo foi preservado.", error);
+    return false;
+  }
 
-    const directoryTargets = [
-      "foundry.applications.sidebar.DocumentDirectory.prototype._onCreateEntry",
-      "foundry.applications.sidebar.DocumentDirectory.prototype._onCreateFolder"
-    ];
-
-    for (const target of directoryTargets) {
+  // Directory wrappers are deliberately separate: a missing optional target
+  // must never disable the DialogV2 wrapper or affect native Journal creation.
+  const directoryTargets = [
+    "foundry.applications.sidebar.DocumentDirectory.prototype._onCreateEntry",
+    "foundry.applications.sidebar.DocumentDirectory.prototype._onCreateFolder"
+  ];
+  for (const target of directoryTargets) {
+    try {
       libWrapper.register(
         MODULE_ID,
         target,
@@ -172,28 +170,27 @@ function installPopupCapture() {
         },
         "WRAPPER"
       );
+    } catch (error) {
+      console.warn("[" + MODULE_ID + "] Não foi possível adicionar contexto ao método " + target + "; a captura por clique continua ativa.", error);
     }
-
-    popupCaptureInstalled = true;
-    console.info("[" + MODULE_ID + "] Captura contextual de DialogV2 instalada.");
-    return true;
-  } catch (error) {
-    console.error("[" + MODULE_ID + "] Não foi possível instalar a captura contextual de pop-ups; o comportamento nativo foi preservado.", error);
-    return false;
   }
+
+  console.info("[" + MODULE_ID + "] Captura contextual de DialogV2 instalada.");
+  return true;
 }
 
 Hooks.once("init", () => {
   installPopupCapture();
 
-  Hooks.on("renderApplicationV2", (app) => {
+  Hooks.on("renderApplicationV2", (app, element) => {
     const targetHost = getTabbedHost();
-    if (targetHost && app === targetHost) bindHostDocument(targetHost, app.element?.ownerDocument);
+    if (targetHost && app === targetHost) bindHostDocument(targetHost, element?.ownerDocument);
   });
 
   Hooks.on("openDetachedWindow", (windowId, win) => {
     const targetHost = getTabbedHost();
-    if (!targetHost || targetHost.window?.windowId !== windowId) return;
+    if (!targetHost) return;
+    if (targetHost.window?.windowId && targetHost.window.windowId !== windowId) return;
     bindHostDocument(targetHost, win?.document);
   });
 

@@ -9,25 +9,7 @@ let host = null;
 let workspaceAnchor = null;
 let originalDetachWindow = null;
 let hostCreation = null;
-let workspaceAnchorCreation = null;
 const pendingCaptures = new WeakMap();
-
-class TabbedFoundryWorkspaceAnchor extends HandlebarsApplication {
-  static DEFAULT_OPTIONS = {
-    id: "tabbed-foundry-workspace-anchor",
-    classes: ["tabbed-foundry-workspace-anchor"],
-    window: { frame: false, resizable: false, minimizable: false },
-    position: { left: 0, top: 0, width: 1, height: 1 }
-  };
-
-  static PARTS = {
-    main: { template: "modules/tabbed-foundry/templates/workspace-anchor.hbs" }
-  };
-
-  async _prepareContext(_options) {
-    return {};
-  }
-}
 
 class TabbedFoundryHost extends HandlebarsApplication {
   static DEFAULT_OPTIONS = {
@@ -378,17 +360,30 @@ class TabbedFoundryHost extends HandlebarsApplication {
           event.stopPropagation();
           this._showTabContextMenu(event, app);
         });
-        activate.addEventListener("dragover", (event) => {
+        tab.addEventListener("dragover", (event) => {
+          const draggedId = this._draggedAppId(event);
+          if (!draggedId || draggedId === appId) return;
           event.preventDefault();
           if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+          const dropZone = this._tabDropZone(event, tab);
+          tab.dataset.dropPreview = dropZone;
         });
-        activate.addEventListener("drop", (event) => {
+        tab.addEventListener("dragleave", (event) => {
+          if (!tab.contains(event.relatedTarget)) delete tab.dataset.dropPreview;
+        });
+        tab.addEventListener("drop", (event) => {
           event.preventDefault();
           event.stopPropagation();
+          delete tab.dataset.dropPreview;
           const draggedId = this._draggedAppId(event);
-          if (!draggedId) return;
+          if (!draggedId || draggedId === appId) return;
+          const dropZone = this._tabDropZone(event, tab);
           this._finishDragSession(true);
-          this._dropOnTab(draggedId, node.id, appId);
+          if (dropZone === "left" || dropZone === "right") {
+            this._splitPaneWithApplication(draggedId, node.id, dropZone);
+          } else {
+            this._dropOnTab(draggedId, node.id, appId);
+          }
         });
 
         const close = doc.createElement("button");
@@ -588,6 +583,15 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._detachApplicationToNativeWindow(session.app);
   }
 
+  _tabDropZone(event, tab) {
+    const bounds = tab.getBoundingClientRect();
+    if (!bounds.width) return "center";
+    const x = (event.clientX - bounds.left) / bounds.width;
+    if (x <= 0.22) return "left";
+    if (x >= 0.78) return "right";
+    return "center";
+  }
+
   _dropOnTab(appId, targetPaneId, targetAppId) {
     const source = this._findPaneForApp(appId);
     const target = this._findPane(this._layoutTree, targetPaneId);
@@ -684,7 +688,41 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this.release(id);
   }
 
-  release(id) {
+  _clearChildPresentation(app) {
+    const element = app?.element;
+    if (!element) return;
+    element.classList.remove("tabbed-foundry-child", "tabbed-foundry-child-active");
+    element.hidden = false;
+    element.removeAttribute("aria-hidden");
+    for (const property of ["position", "left", "top", "width", "height", "z-index"]) {
+      element.style.removeProperty(property);
+    }
+  }
+
+  prepareForNativeDetach(app) {
+    if (!this._tabbedApps.has(app.id)) return;
+    this._clearChildPresentation(app);
+    const originalPosition = this._originalPositions.get(app.id);
+    if (originalPosition && app.rendered) app.setPosition(originalPosition);
+  }
+
+  _closeWhenEmpty() {
+    const view = this.element?.ownerDocument?.defaultView;
+    const schedule = view?.setTimeout?.bind(view) ?? setTimeout;
+    schedule(async () => {
+      if (!this.rendered || this._tabbedApps.size > 0) return;
+      const remainingChildren = [...(this.children?.values?.() ?? [])]
+        .some(child => child?.rendered && child.parent === this);
+      if (remainingChildren) return;
+      try {
+        await this.close();
+      } catch (error) {
+        console.error("[" + MODULE_ID + "] Não foi possível fechar a janela Tabbed vazia.", error);
+      }
+    }, 0);
+  }
+
+  release(id, { restorePosition = true } = {}) {
     const app = this._tabbedApps.get(id);
     if (!app) return;
 
@@ -700,24 +738,17 @@ class TabbedFoundryHost extends HandlebarsApplication {
     if (observed && this._childResizeObserver) this._childResizeObserver.unobserve(observed);
     this._observedChildren.delete(id);
 
-    const element = app.element;
-    if (element) {
-      element.classList.remove("tabbed-foundry-child", "tabbed-foundry-child-active");
-      element.hidden = false;
-      element.removeAttribute("aria-hidden");
-      for (const property of ["position", "left", "top", "width", "height", "z-index"]) {
-        element.style.removeProperty(property);
-      }
-    }
+    this._clearChildPresentation(app);
 
     const originalPosition = this._originalPositions.get(id);
     this._originalPositions.delete(id);
     this._tabbedApps.delete(id);
     this._removeFromLayout(id);
 
-    if (originalPosition && app.rendered) app.setPosition(originalPosition);
+    if (restorePosition && originalPosition && app.rendered) app.setPosition(originalPosition);
     this._renderWorkspace();
     this._scheduleLayout();
+    this._closeWhenEmpty();
   }
 
   _applyOptionalIntegrations(app) {
@@ -819,8 +850,11 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
   async _returnApplicationToWorkspace(app) {
     if (!this._tabbedApps.has(app.id)) return;
-    const anchor = await getOrCreateWorkspaceAnchor();
-    await anchor.renderChild(app);
+    const mainWorkspace = await getOrCreateWorkspaceAnchor();
+    if (!(mainWorkspace instanceof ApplicationV2)) {
+      throw new Error("A Sidebar principal do Foundry não está disponível como ApplicationV2.");
+    }
+    await mainWorkspace.renderChild(app);
     this.release(app.id);
     app.bringToFront();
   }
@@ -849,21 +883,16 @@ function isAutoGroupingEnabled() {
 }
 
 async function getOrCreateWorkspaceAnchor() {
-  if (workspaceAnchor?.rendered) return workspaceAnchor;
-  if (workspaceAnchorCreation) return workspaceAnchorCreation;
-
-  workspaceAnchorCreation = (async () => {
-    const candidate = new TabbedFoundryWorkspaceAnchor();
-    await candidate.render({ force: true });
-    workspaceAnchor = candidate;
-    return candidate;
-  })();
-
-  try {
-    return await workspaceAnchorCreation;
-  } finally {
-    workspaceAnchorCreation = null;
+  // The Foundry Sidebar is a native ApplicationV2 already attached to the
+  // primary workspace. Re-parenting to it avoids creating a second hidden
+  // Application host which could conflict with Tabbed Foundry interception.
+  const sidebar = ui.sidebar;
+  if (!(sidebar instanceof ApplicationV2)) {
+    throw new Error("ui.sidebar não está disponível como ApplicationV2.");
   }
+  if (!sidebar.rendered) await sidebar.render({ force: true });
+  workspaceAnchor = sidebar;
+  return sidebar;
 }
 
 async function getOrCreateHost() {
@@ -943,15 +972,20 @@ function installDetachInterceptor() {
 
     if (host && this.parent === host) {
       const parentHost = host;
-      parentHost.release(this.id);
-      return originalDetachWindow.call(this, options).catch(async (error) => {
-        try {
-          await parentHost.adopt(this, options);
-        } catch (recoveryError) {
-          console.error("[" + MODULE_ID + "] Não foi possível restaurar a aba após falha no detach.", recoveryError);
-        }
-        throw error;
-      });
+      // The native detach must succeed before removing the app from the pane
+      // tree. This keeps the tab intact when Electron cannot create its window.
+      parentHost.prepareForNativeDetach(this);
+      return Promise.resolve()
+        .then(() => originalDetachWindow.call(this, options))
+        .then((result) => {
+          parentHost.release(this.id, { restorePosition: false });
+          return result;
+        })
+        .catch((error) => {
+          parentHost._decorateChild(this);
+          parentHost._scheduleLayout();
+          throw error;
+        });
     }
 
     if (!isAutoGroupingEnabled()) return originalDetachWindow.call(this, options);

@@ -1,18 +1,41 @@
 # Tabbed Foundry
 
-Módulo experimental para Foundry VTT v14 que reúne aplicações `ApplicationV2` destacadas em uma única janela externa com abas.
+Módulo experimental para Foundry VTT v14 que reúne aplicações `ApplicationV2` destacadas em uma única janela externa. Cada painel possui suas próprias abas e pode ser dividido em layouts aninhados.
 
-## Abas e ações
+## Organização por abas
 
 - O primeiro destaque cria a janela externa do Tabbed Foundry.
-- A aplicação destacada é registrada como filha usando `ApplicationV2.renderChild()`.
-- As próximas aplicações são adicionadas à mesma janela.
-- A alternância de abas não recria nem move manualmente os elementos do DOM.
-- As abas podem ser reordenadas por arrastar e soltar e cada aplicação pode ser fechada individualmente.
-- Clique com o botão direito em uma aba para abrir o menu contextual:
-  - **Voltar para o Foundry:** transfere a aplicação para um pai invisível na janela principal, mantendo-a como a mesma instância.
-  - **Destacar em janela própria:** usa o `ApplicationV2.detachWindow()` original para abrir uma janela externa individual.
-- Arrastar uma aba para um destino que não aceite a operação (aba existente ou futura zona de divisão) aciona o detach nativo. Pressionar Escape cancela o arraste sem destacar a aplicação.
+- As aplicações são registradas como filhas com `ApplicationV2.renderChild()`.
+- Cada painel mantém um conjunto independente de abas.
+- Abas podem ser reordenadas arrastando-as dentro da barra.
+- Clique com o botão direito em uma aba para:
+  - **Voltar para o Foundry:** transferir a aplicação para a janela principal.
+  - **Destacar em janela própria:** usar o detach nativo do Foundry e abrir uma janela externa individual.
+- Fechar uma aba fecha apenas aquela aplicação.
+
+## Split View
+
+Para dividir um painel, arraste uma aba e solte em uma das zonas de destino que aparecem durante o arraste:
+
+- Esquerda / direita: cria painéis lado a lado.
+- Superior / inferior: cria painéis empilhados.
+- Centro: move a aplicação para o grupo de abas daquele painel.
+- Arrastar a aba para fora de uma zona aceita (e soltar fora do Tabbed Foundry) destaca a aplicação em uma janela nativa.
+- Pressionar Escape cancela o arraste.
+
+Os painéis podem ser divididos novamente, criando layouts aninhados. Arraste a divisória para redimensionar os painéis; duplo clique na divisória restaura a proporção 50/50. Cada lado tenta preservar pelo menos 180 px quando o espaço disponível permite.
+
+## Atualização de geometria
+
+O módulo acompanha os eventos `render` e `position` das aplicações, além de observar alterações de tamanho. Assim, atualiza a geometria dos painéis depois de operações internas do Playlist Directory, Combat Tracker e outras aplicações que recalculam suas dimensões.
+
+## Compatibilidade opcional com Monk's Enhanced Journal
+
+Quando `monks-enhanced-journal` está instalado e ativo, o Tabbed Foundry aplica um patch local aos botões `.journal-tab .close` do Enhanced Journal. O patch interrompe a propagação do clique depois do handler do próprio Monk, evitando que o clique de fechar também ative a página que está sendo removida.
+
+- Não existe dependência obrigatória de Monk's Enhanced Journal.
+- Sem o Monk's Enhanced Journal, essa integração não é executada.
+- A integração é aplicada novamente após cada renderização do Enhanced Journal, incluindo páginas internas que forem recriadas.
 
 ## Configuração
 
@@ -21,27 +44,27 @@ Em **Game Settings → Module Settings → Tabbed Foundry**, use **Agrupar aplic
 - Ativado (padrão): o botão de destacar envia `ApplicationV2` para a janela Tabbed Foundry.
 - Desativado: o método original `ApplicationV2.detachWindow()` é executado sem agrupamento.
 
-A configuração é individual por cliente (`scope: client`) e vale para os próximos destaques.
+A configuração é individual por cliente (`scope: client`).
 
 ## Arquitetura
 
-- `HandlebarsApplicationMixin(ApplicationV2)` para as aplicações hospedeiras.
-- `ApplicationV2.renderChild()` para transferir aplicações entre a janela Tabbed e o pai invisível no workspace principal.
+- `HandlebarsApplicationMixin(ApplicationV2)` para a janela hospedeira e o ponto de retorno ao workspace principal.
+- `ApplicationV2.renderChild()` para gerenciar aplicações como filhas do host ou do workspace principal.
 - `ApplicationV2.detachWindow()` para destacar uma aplicação em sua própria janela nativa.
-- O pai invisível do workspace principal é renderizado sem frame e mantém as aplicações reanexadas na janela principal do Foundry.
-- A barra de abas usa menu contextual próprio e drag-and-drop HTML5.
-- Os futuros alvos de Split View devem chamar `host.acceptDraggedTabDrop()` ao aceitar uma aba; um arraste não aceito resulta em detach nativo.
+- Uma árvore recursiva de painéis (`pane` / `split`) controla grupos de abas, divisões e proporções.
+- Os separadores usam Pointer Events; as zonas de divisão usam HTML Drag and Drop.
+- A geometria dos filhos é reaplicada nos eventos oficiais `render` e `position`, e observada por `ResizeObserver`.
+- A integração com Monk's Enhanced Journal é detectada em tempo de execução e não adiciona dependência ao manifesto.
 
-## Escopo e limitações
+## Escopo e testes necessários
 
 - O agrupamento automático cobre `ApplicationV2`. Aplicações legadas `ApplicationV1` seguem o comportamento nativo.
-- A divisão de painéis (Split View) ainda não está implementada nesta versão. O comportamento de arraste já reserva a regra: zonas de divisão aceitas mantêm a aplicação no Tabbed; arrastes não aceitos destacam a aplicação em janela nativa.
-- Aplicações que não usam `ApplicationV2.detachWindow()` para destacar suas janelas não são interceptadas.
-- A implementação precisa ser validada no Foundry Desktop v14.365, especialmente o retorno ao workspace principal, destacamento individual, cancelamento de arraste e módulos que personalizam janelas.
+- Testar no Foundry Desktop v14.365: dividir horizontal e verticalmente, divisões aninhadas, redimensionar separadores, mover abas entre painéis, soltar fora do host, cancelar com Escape e fechar painéis.
+- Com Monk's Enhanced Journal ativo, testar fechar uma página interna, alternar páginas e adicionar novas páginas.
+- Testar Playlist Directory ao expandir/recolher pastas e Combat Tracker ao iniciar/avançar combate.
+- Testar retorno à janela principal, detach nativo individual, minimização, restauração e fechamento da janela hospedeira.
 
-## Desenvolvimento
-
-Copie a pasta `tabbed-foundry` para `Data/modules/` e ative o módulo. A versão atual é experimental; não considere a compatibilidade validada até executar os testes no cliente Foundry.
+A implementação permanece experimental até esses testes serem feitos no cliente Foundry Desktop.
 
 ## API do Foundry utilizada
 
@@ -49,4 +72,5 @@ Copie a pasta `tabbed-foundry` para `Data/modules/` e ative o módulo. A versão
 - `ApplicationV2.renderChild()`
 - `ApplicationV2.detachWindow()`
 - `ApplicationV2.attachWindow()`
+- Eventos `render` e `position` de `ApplicationV2`
 - `ApplicationV2.parent` e `ApplicationV2.children`

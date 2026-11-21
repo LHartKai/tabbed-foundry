@@ -2,7 +2,7 @@
 
 Módulo experimental para Foundry VTT v14 que organiza aplicações `ApplicationV2` destacadas em uma janela externa única, com abas e painéis divididos.
 
-> **Prévia de desenvolvimento — v1.3.0-beta.2.** Esta versão reativa o agrupamento após o modo de segurança e muda a interceptação para libWrapper. Ainda precisa de validação no Foundry Desktop v14.365 antes de ser considerada estável.
+> **Prévia de desenvolvimento — v1.3.0-beta.3.** Esta versão reativa o agrupamento após o modo de segurança e muda a interceptação para libWrapper. Ainda precisa de validação no Foundry Desktop v14.365 antes de ser considerada estável.
 
 ## Funcionalidades
 

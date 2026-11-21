@@ -370,17 +370,19 @@
 }
 
 
-/* Drop a tab on the host titlebar to return that application to Foundry. */
-.tabbed-foundry-host > .window-header.tabbed-foundry-return-drop-active {
-  outline: 2px dashed var(--color-border-highlight, #c9a66b);
-  outline-offset: -3px;
-  background: var(--color-hover, rgba(201, 166, 107, 0.22)) !important;
+
+
+/* A detached ApplicationV2 header can be dragged into the existing Tabbed host. */
+.tabbed-foundry-external-drag-handle {
+  cursor: grab;
 }
 
+.tabbed-foundry-external-drag-handle:active {
+  cursor: grabbing;
+}
 
-/* Highlight the native Foundry sidebar tab row while returning a Tabbed app. */
-.tabbed-foundry-workspace-return-drop-active {
-  outline: 2px dashed var(--color-border-highlight, #c9a66b) !important;
+.tabbed-foundry-pane-tabs.drag-over {
+  outline: 2px dashed var(--color-border-highlight, #c9a66b);
   outline-offset: -3px;
-  background: var(--color-hover, rgba(201, 166, 107, 0.22)) !important;
+  background: var(--color-hover, rgba(201, 166, 107, 0.22));
 }

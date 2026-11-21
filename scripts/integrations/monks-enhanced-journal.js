@@ -201,9 +201,6 @@ function installPageStyleHook() {
 function publishIntegrationStatus() {
   game[INTEGRATION_STATE] ??= {};
   game[INTEGRATION_STATE].mejCompatibility = integrationStatus;
-
-  const module = game.modules.get(MODULE_ID);
-  if (module?.api) module.api.mejCompatibility = integrationStatus;
 }
 
 Hooks.once("setup", () => {

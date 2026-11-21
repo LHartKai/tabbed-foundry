@@ -24,8 +24,10 @@ async function boot({
   ]);
 
   class ApplicationV2 {
-    async _preFirstRender() {
-      return "base-pre-first-render";
+    async _preFirstRender() {}
+    async render(...args) {
+      await this._preFirstRender({}, args[1] ?? {});
+      return this;
     }
   }
 
@@ -103,7 +105,10 @@ async function boot({
   vm.runInNewContext(source, context, { filename: "monks-enhanced-journal.js" });
   for (const callback of hooks.get("setup") ?? []) await callback();
 
-  return { context, game, hooks, registrations, modules, mej, originalFixType, ApplicationV2, EnhancedJournalSheet, PersonSheet, originalFixTypeCalls };
+  return {
+    context, game, hooks, registrations, modules, mej, originalFixType,
+    ApplicationV2, EnhancedJournalSheet, PersonSheet, originalFixTypeCalls
+  };
 }
 
 (async () => {
@@ -119,14 +124,9 @@ async function boot({
   assert.equal(env.registrations[0].packageId, "tabbed-foundry");
   assert.equal(
     env.registrations[0].target,
-    "foundry.applications.api.ApplicationV2.prototype._preFirstRender"
+    "foundry.applications.api.ApplicationV2.prototype.render"
   );
   assert.equal(env.registrations[0].type, "WRAPPER");
-  assert.equal(
-    env.ApplicationV2.prototype._preFirstRender.name,
-    "_preFirstRender",
-    "the global ApplicationV2 prototype is not replaced directly"
-  );
 
   // MEJ's missing-document compendium call becomes a safe no-op.
   assert.doesNotThrow(() => env.mej.fixType(undefined));
@@ -164,35 +164,50 @@ async function boot({
   assert.equal(rendered.renderer, "enhanced-journal");
   assert.equal(rendered.options.force, false);
 
-  // The _preFirstRender wrapper patches only MEJ's own EnhancedJournal class.
+  // Reproduce Monk's real ordering: _preFirstRender creates tabs, calls
+  // removeDuplicateTabs, and only afterward assigns this.tabs.active.
   class EnhancedJournal extends env.ApplicationV2 {
+    constructor() {
+      super();
+      this.id = "MonksEnhancedJournal";
+      this.tabs = [];
+    }
+    async _preFirstRender(context, options) {
+      await super._preFirstRender(context, options);
+      this.tabs = [
+        { entityId: "journal-1", active: false },
+        { entityId: "journal-1", active: true },
+        { entityId: "journal-2", active: false }
+      ];
+      this.removeDuplicateTabs();
+      this.tabs.active = (findone = true) => {
+        let tab = this.tabs.find(item => item.active);
+        if (findone && !tab) tab = this.tabs[0];
+        return tab;
+      };
+    }
     removeDuplicateTabs() {
       const uniqueTabs = this.tabs.filter((tab, index, self) =>
         index === self.findIndex(candidate => candidate.entityId === tab.entityId)
       );
       if (!uniqueTabs.some(tab => tab.active)) {
-        const activeId = this.tabs.active(true)?.entityId;
-        if (activeId) uniqueTabs.find(tab => tab.entityId === activeId).active = true;
+        const activeTab = this.tabs.active(true);
+        if (activeTab) uniqueTabs.find(tab => tab.entityId === activeTab.entityId).active = true;
       }
       this.tabs = uniqueTabs;
     }
   }
-  const enhancedJournal = new EnhancedJournal();
-  enhancedJournal.tabs = [
-    { entityId: "journal-1", active: false },
-    { entityId: "journal-1", active: true },
-    { entityId: "journal-2", active: false }
-  ];
 
+  const enhancedJournal = new EnhancedJournal();
   await env.registrations[0].fn.call(
     enhancedJournal,
-    () => Promise.resolve("wrapped-base-render"),
-    {},
+    (...args) => env.ApplicationV2.prototype.render.apply(enhancedJournal, args),
+    true,
     {}
   );
-  assert.doesNotThrow(() => enhancedJournal.removeDuplicateTabs());
   assert.equal(enhancedJournal.tabs.length, 2);
-  assert.equal(enhancedJournal.tabs[0].active, true, "the surviving duplicate keeps active state");
+  assert.equal(enhancedJournal.tabs[0].active, true, "the active duplicate survives without tabs.active being initialized");
+  assert.equal(typeof enhancedJournal.tabs.active, "function", "Monk initializes tabs.active after duplicate removal");
 
   // The page style hook is installed only for MEJ subsheets.
   const pageHook = (env.hooks.get("renderJournalPageSheet") ?? [])[0];
@@ -230,4 +245,4 @@ async function boot({
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;
-});
+})();

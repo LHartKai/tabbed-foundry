@@ -217,6 +217,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.ok(source.includes("await attachApplicationToMainWorkspace(app)"), "reattachment moves the selected app directly to the main workspace");
   assert.doesNotMatch(source, /makeItem\("Voltar para o Foundry"/, "the tab context menu no longer offers the return-to-Foundry action");
   assert.match(source, /dragHandle\.draggable = true/, "the title of a standalone detached app is the drag source");
+  assert.match(source, /_hasTabbedFoundryDrag\(event\)/, "external cross-window drags are accepted before DataTransfer payloads can be read");
   assert.match(source, /setData\("application\/x-tabbed-foundry-app", app\.id\)/, "detached app drags carry the ApplicationV2 id");
   assert.match(source, /this\._adoptDraggedApplication\(draggedId, node\.id, appId\)/, "dropping on an existing tab adopts the external app into this host");
   assert.match(source, /this\._adoptDraggedApplication\(draggedId, node\.id\)/, "dropping on the empty tab strip adopts the external app into this host");

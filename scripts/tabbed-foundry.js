@@ -1067,55 +1067,7 @@ async function captureApplication(app, options) {
   }
 }
 
-function installDetachInterceptor() {
-  const prototype = ApplicationV2.prototype;
-  if (prototype[PATCH_FLAG]) return;
-
-  originalDetachWindow = prototype.detachWindow;
-  if (typeof originalDetachWindow !== "function") {
-    console.error("[" + MODULE_ID + "] ApplicationV2.detachWindow não foi encontrado. O módulo não fará interceptação.");
-    return;
-  }
-
-  prototype.detachWindow = function(options = {}) {
-    if (this instanceof TabbedFoundryHost) return originalDetachWindow.call(this, options);
-
-    if (host && this.parent === host) {
-      const parentHost = host;
-      // The native detach must succeed before removing the app from the pane
-      // tree. This keeps the tab intact when Electron cannot create its window.
-      parentHost.prepareForNativeDetach(this);
-      return Promise.resolve()
-        .then(() => originalDetachWindow.call(this, options))
-        .then((result) => {
-          parentHost.release(this.id, { restorePosition: false });
-          return result;
-        })
-        .catch((error) => {
-          parentHost._detachingApps.delete(this.id);
-          parentHost._decorateChild(this);
-          parentHost._scheduleLayout();
-          throw error;
-        });
-    }
-
-    if (!isAutoGroupingEnabled()) return originalDetachWindow.call(this, options);
-
-    if (workspaceAnchor && this.parent === workspaceAnchor) {
-      return captureApplication(this, options);
-    }
-
-    if (this.window?.windowId || this.parent) return originalDetachWindow.call(this, options);
-    return captureApplication(this, options);
-  };
-
-  Object.defineProperty(prototype, PATCH_FLAG, {
-    value: true,
-    configurable: false,
-    enumerable: false,
-    writable: false
-  });
-}
+/* Native detach interception intentionally removed in emergency safe mode. */
 
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, SETTING_AUTO_GROUP, {

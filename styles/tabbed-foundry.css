@@ -1,10 +1,7 @@
-/* The host owns one detached Foundry window. Children remain registered via
-   ApplicationV2.renderChild and are positioned over the host content area. */
 /*
- * Foundry v14 applies backdrop-filter blur to ApplicationV2 surfaces.
- * The Tabbed Foundry host sits above its child application, so its glass
- * surface would blur the child behind it. Disable that effect only for the
- * host window; other Foundry applications keep their normal appearance.
+ * Tabbed Foundry uses one detached host window. Its transparent surface lets
+ * child ApplicationV2 instances receive clicks, while the titlebar, pane tabs,
+ * splitters and active drag/drop zones remain interactive.
  */
 .tabbed-foundry-host,
 .tabbed-foundry-host::before,
@@ -18,10 +15,6 @@
   background: transparent !important;
 }
 
-/*
- * The host frame is a transparent interaction layer above the child app.
- * Let clicks pass through its empty surface; only its own controls are active.
- */
 .tabbed-foundry-host {
   z-index: 100000 !important;
   pointer-events: none !important;
@@ -29,21 +22,18 @@
 
 .tabbed-foundry-host > .window-header,
 .tabbed-foundry-host > .window-header *,
-.tabbed-foundry-host .tabbed-foundry-tabs,
-.tabbed-foundry-host .tabbed-foundry-tabs * {
-  pointer-events: auto !important;
-}
-
 .tabbed-foundry-host > .window-content {
-  pointer-events: none !important;
+  pointer-events: auto !important;
 }
 
 .tabbed-foundry-host > .window-content {
   position: relative;
   display: block;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   padding: 0;
+  pointer-events: none !important;
 }
 
 .tabbed-foundry-host .tabbed-foundry-shell {
@@ -51,27 +41,51 @@
   inset: 0;
   z-index: 100001;
   display: flex;
+  min-width: 0;
+  min-height: 0;
   flex-direction: column;
   pointer-events: none;
 }
 
-.tabbed-foundry-tabs {
+.tabbed-foundry-workspace {
   display: flex;
-  flex: 0 0 2.8rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.tabbed-foundry-pane {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.tabbed-foundry-pane-tabs {
+  position: relative;
+  z-index: 100001;
+  display: flex;
+  flex: 0 0 2.65rem;
   align-items: stretch;
-  gap: 0.25rem;
+  gap: 0.2rem;
   min-width: 0;
   overflow-x: auto;
   border-bottom: 1px solid var(--color-border-light-primary, #777);
-  background: var(--background-color, rgba(0, 0, 0, 0.16));
-  pointer-events: auto;
+  background: var(--color-cool-5, rgba(25, 22, 28, 0.94));
+  pointer-events: auto !important;
 }
 
 .tabbed-foundry-tab {
   display: flex;
   flex: 0 1 auto;
   align-items: stretch;
-  min-width: 5rem;
+  min-width: 4.5rem;
   max-width: 18rem;
   border: 1px solid var(--color-border-light-tertiary, #555);
   border-bottom: 0;
@@ -89,12 +103,13 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
+  pointer-events: auto !important;
 }
 
 .tabbed-foundry-tab-label {
   overflow: hidden;
   flex: 1 1 auto;
-  padding: 0.5rem 0.65rem;
+  padding: 0.48rem 0.6rem;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -102,24 +117,150 @@
 
 .tabbed-foundry-tab-close {
   flex: 0 0 auto;
-  padding: 0.35rem 0.55rem;
+  padding: 0.3rem 0.5rem;
   font-size: 1.1rem;
 }
 
-.tabbed-foundry-empty {
-  margin: auto;
-  padding: 0.75rem;
-  opacity: 0.7;
+.tabbed-foundry-pane-content {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.tabbed-foundry-pane-empty {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: var(--color-text-light-secondary, #aaa);
+  opacity: 0.65;
   font-style: italic;
   pointer-events: none;
 }
 
-.tabbed-foundry-empty[hidden] {
-  display: none !important;
+.tabbed-foundry-split {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-/* Child frames are presented as tab content. Their header is replaced by the
-   host's tab strip; the original application DOM and lifecycle are preserved. */
+.tabbed-foundry-split.split-horizontal {
+  flex-direction: row;
+}
+
+.tabbed-foundry-split.split-vertical {
+  flex-direction: column;
+}
+
+.tabbed-foundry-split-child {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.tabbed-foundry-divider {
+  position: relative;
+  z-index: 100003;
+  flex: 0 0 7px;
+  background: var(--color-border-light-primary, rgba(150, 140, 160, 0.35));
+  pointer-events: auto !important;
+  transition: background 100ms ease;
+}
+
+.tabbed-foundry-divider:hover,
+.tabbed-foundry-divider:active,
+.tabbed-foundry-divider:focus-visible {
+  outline: none;
+  background: var(--color-border-highlight, #c9a66b);
+}
+
+.split-horizontal > .tabbed-foundry-divider {
+  cursor: col-resize;
+}
+
+.split-vertical > .tabbed-foundry-divider {
+  cursor: row-resize;
+}
+
+.tabbed-foundry-dropzones {
+  position: absolute;
+  z-index: 100002;
+  inset: 2.65rem 0 0;
+  display: none;
+  pointer-events: none;
+}
+
+.tabbed-foundry-host.tabbed-foundry-dragging .tabbed-foundry-dropzones {
+  display: block;
+}
+
+.tabbed-foundry-dropzone {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0.35rem;
+  border: 2px dashed var(--color-border-highlight, #c9a66b);
+  border-radius: 6px;
+  background: rgba(40, 34, 47, 0.72);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.86;
+  cursor: copy;
+  pointer-events: auto !important;
+}
+
+.tabbed-foundry-dropzone:hover,
+.tabbed-foundry-dropzone.drag-over {
+  background: rgba(133, 102, 163, 0.88);
+  opacity: 1;
+}
+
+.tabbed-foundry-dropzone.zone-left {
+  top: 24%;
+  bottom: 24%;
+  left: 1%;
+  width: 21%;
+}
+
+.tabbed-foundry-dropzone.zone-right {
+  top: 24%;
+  right: 1%;
+  bottom: 24%;
+  width: 21%;
+}
+
+.tabbed-foundry-dropzone.zone-top {
+  top: 1%;
+  left: 24%;
+  width: 52%;
+  height: 21%;
+}
+
+.tabbed-foundry-dropzone.zone-bottom {
+  bottom: 1%;
+  left: 24%;
+  width: 52%;
+  height: 21%;
+}
+
+.tabbed-foundry-dropzone.zone-center {
+  top: 28%;
+  left: 28%;
+  width: 44%;
+  height: 44%;
+  border-style: solid;
+  background: rgba(40, 34, 47, 0.82);
+}
+
 .tabbed-foundry-child {
   box-sizing: border-box !important;
   margin: 0 !important;
@@ -213,8 +354,7 @@
   opacity: 0.7;
 }
 
-/* A no-frame root in the main Foundry document acts as the reattachment
-   parent; its children render as normal main-workspace applications. */
+/* Invisible parent used to return an application to the main Foundry window. */
 .tabbed-foundry-workspace-anchor {
   position: fixed !important;
   top: 0 !important;
@@ -227,8 +367,6 @@
   border: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
-  /* Keep the zero-sized anchor hit-testable by default so any child it
-     manages can explicitly retain normal interaction. */
   z-index: 0 !important;
 }
 

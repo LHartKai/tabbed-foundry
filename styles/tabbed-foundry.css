@@ -80,13 +80,13 @@
   position: fixed !important;
   inset: 5rem 0 0 0 !important;
   width: auto !important;
-  height: calc(100% - 5rem) !important;
+  height: auto !important;
   max-width: none !important;
   max-height: none !important;
   min-width: 0 !important;
   min-height: 0 !important;
   transform: none !important;
-  z-index: 100 !important;
+  z-index: 9999 !important;
 }
 
 .tabbed-foundry-child > .window-header {

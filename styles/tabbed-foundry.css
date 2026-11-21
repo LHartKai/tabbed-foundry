@@ -307,19 +307,6 @@
   overflow: auto;
 }
 
-/* ApplicationV2 pop-up windows captured from actions inside a Tabbed child. */
-.tabbed-foundry-popup {
-  z-index: 100005 !important;
-  pointer-events: auto !important;
-}
-
-.tabbed-foundry-popup > .window-header,
-.tabbed-foundry-popup > .window-header *,
-.tabbed-foundry-popup > .window-content,
-.tabbed-foundry-popup > .window-content * {
-  pointer-events: auto !important;
-}
-
 /* Context menu opened by right-clicking an application tab. */
 .tabbed-foundry-context-menu {
   position: fixed;

@@ -430,6 +430,27 @@ class TabbedFoundryHost extends HandlebarsApplication {
       const tabs = doc.createElement("nav");
       tabs.className = "tabbed-foundry-pane-tabs";
       tabs.setAttribute("aria-label", "Abas do painel");
+      // Dropping on the empty part of the tab strip means append/reorder in this pane,
+      // not detach the application into a separate native window.
+      tabs.addEventListener("dragover", (event) => {
+        const draggedId = this._draggedAppId(event);
+        if (!draggedId || !this._tabbedApps.has(draggedId) || event.target?.closest?.(".tabbed-foundry-tab")) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        tabs.classList.add("drag-over");
+      });
+      tabs.addEventListener("dragleave", (event) => {
+        if (!tabs.contains(event.relatedTarget)) tabs.classList.remove("drag-over");
+      });
+      tabs.addEventListener("drop", (event) => {
+        const draggedId = this._draggedAppId(event);
+        if (!draggedId || !this._tabbedApps.has(draggedId) || event.target?.closest?.(".tabbed-foundry-tab")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        tabs.classList.remove("drag-over");
+        this._finishDragSession(true);
+        this._dropOnTabStrip(draggedId, node.id);
+      });
 
       for (const appId of node.tabs) {
         const app = this._tabbedApps.get(appId);
@@ -686,6 +707,27 @@ class TabbedFoundryHost extends HandlebarsApplication {
     if (x <= 0.22) return "left";
     if (x >= 0.78) return "right";
     return "center";
+  }
+
+  _dropOnTabStrip(appId, targetPaneId) {
+    const source = this._findPaneForApp(appId);
+    const target = this._findPane(this._layoutTree, targetPaneId);
+    if (!source || !target) return;
+
+    if (source.id === target.id) {
+      source.tabs = source.tabs.filter(id => id !== appId);
+      source.tabs.push(appId);
+    } else {
+      this._removeFromLayout(appId);
+      const destination = this._findPane(this._layoutTree, targetPaneId);
+      if (!destination) return;
+      destination.tabs.push(appId);
+    }
+
+    const destination = this._findPane(this._layoutTree, targetPaneId);
+    if (destination) destination.activeId = appId;
+    this._activePaneId = targetPaneId;
+    this._renderWorkspace();
   }
 
   _dropOnTab(appId, targetPaneId, targetAppId) {

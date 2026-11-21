@@ -1,22 +1,23 @@
 const MODULE_ID = "tabbed-foundry";
-const SETTING_ENABLED = "enabled";
+const SETTING_AUTO_GROUP = "enabled";
+const PATCH_FLAG = "__tabbedFoundryDetachPatch";
 
-let originalDetachWindow;
+const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
+const HandlebarsApplication = HandlebarsApplicationMixin(ApplicationV2);
+
 let host = null;
+let originalDetachWindow = null;
 let hostCreation = null;
-let detachInterceptorInstalled = false;
+const pendingCaptures = new WeakMap();
 
-const ApplicationV2 = foundry.applications.api.ApplicationV2;
-const HandlebarsApplicationMixin = foundry.applications.api.HandlebarsApplicationMixin;
-const TabbedFoundryApplication = HandlebarsApplicationMixin(ApplicationV2);
-
-class TabbedFoundryHost extends TabbedFoundryApplication {
+class TabbedFoundryHost extends HandlebarsApplication {
   static DEFAULT_OPTIONS = {
     id: "tabbed-foundry-host",
     classes: ["tabbed-foundry-host"],
     window: {
       title: "Tabbed Foundry",
       icon: "fas fa-layer-group",
+      frame: true,
       resizable: true,
       minimizable: true
     },
@@ -29,62 +30,183 @@ class TabbedFoundryHost extends TabbedFoundryApplication {
 
   constructor(options = {}) {
     super(options);
-    this.tabbedApplications = new Map();
-    this.activeApplicationId = null;
+    this._tabbedApps = new Map();
+    this._activeId = null;
+    this._boundLayout = () => this._layoutChildren();
+    this._resizeObserver = null;
+    this._observedView = null;
+    this.addEventListener("close", () => {
+      this._removeLayoutObservers();
+      if (host === this) host = null;
+    });
+    this.addEventListener("position", this._boundLayout);
   }
 
-  async _prepareContext(options) {
-    return { moduleId: MODULE_ID };
+  async _prepareContext(_options) {
+    return {};
   }
 
   async _onRender(context, options) {
     await super._onRender(context, options);
-    this._renderTabs();
-    this._syncApplications();
+    this._renderTabStrip();
+    this._syncChildElements();
+    this._setupLayoutObservers();
+    this._layoutChildren();
   }
 
-  async addApplication(app) {
-    if (!app || app === this) return false;
+  async ensureDetachedWindow() {
+    if (!this.rendered) await this.render({ force: true });
+    if (!this.window?.windowId) {
+      await originalDetachWindow.call(this, {});
+    }
+    this._setupLayoutObservers();
+    this._layoutChildren();
+  }
 
-    if (this.tabbedApplications.has(app.id)) {
-      this.activateApplication(app.id);
-      return true;
+  async adopt(app, options = {}) {
+    if (!(app instanceof ApplicationV2) || app === this) {
+      throw new TypeError("Tabbed Foundry só pode agrupar instâncias ApplicationV2.");
     }
 
-    // renderChild is the Foundry-supported parent/child lifecycle.
-    // It does not manually move the application's DOM element.
-    await this.renderChild(app);
+    if (this._tabbedApps.has(app.id)) {
+      this.activate(app.id);
+      return app;
+    }
 
-    this.tabbedApplications.set(app.id, app);
-    this.activeApplicationId = app.id;
+    await this.ensureDetachedWindow();
+    await this.renderChild(app, options);
 
-    this._syncApplications();
-    this._renderTabs();
-    this.bringToFront();
-    return true;
+    this._tabbedApps.set(app.id, app);
+    app.addEventListener("render", () => this._decorateChild(app));
+    app.addEventListener("close", () => this._onChildClosed(app.id));
+
+    this._activeId = app.id;
+    this._decorateChild(app);
+    this._syncChildElements();
+    this._renderTabStrip();
+    this._layoutChildren();
+    this.activate(app.id);
+    return app;
   }
 
-  _syncApplications() {
-    for (const [id, app] of this.tabbedApplications) {
-      const element = app.element;
+  _decorateChild(app) {
+    const element = app?.element;
+    if (!element) return;
+    element.classList.add("tabbed-foundry-child");
+    element.hidden = app.id !== this._activeId;
+    element.setAttribute("aria-hidden", String(app.id !== this._activeId));
+  }
+
+  _syncChildElements() {
+    for (const [id, app] of this._tabbedApps) {
+      this._decorateChild(app);
+      const element = app?.element;
       if (!element) continue;
+      element.classList.toggle("tabbed-foundry-child-active", id === this._activeId);
+    }
+    this._layoutChildren();
+  }
 
-      element.classList.add("tabbed-foundry-child");
-      element.hidden = id !== this.activeApplicationId;
-      element.toggleAttribute("aria-hidden", id !== this.activeApplicationId);
+  _setupLayoutObservers() {
+    const element = this.element;
+    const view = element?.ownerDocument?.defaultView;
+    const content = element?.querySelector(":scope > .window-content") ?? element?.querySelector(".window-content");
+    if (!view || !content) return;
+    if (this._observedView !== view) {
+      this._removeLayoutObservers();
+      this._observedView = view;
+      view.addEventListener("resize", this._boundLayout);
+    }
+    if (!this._resizeObserver && typeof view.ResizeObserver === "function") {
+      this._resizeObserver = new view.ResizeObserver(this._boundLayout);
+      this._resizeObserver.observe(content);
     }
   }
 
-  _renderTabs() {
+  _removeLayoutObservers() {
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
+    this._observedView?.removeEventListener("resize", this._boundLayout);
+    this._observedView = null;
+  }
+
+  _layoutChildren() {
+    const root = this.element;
+    const content = root?.querySelector(":scope > .window-content") ?? root?.querySelector(".window-content");
+    if (!root || !content) return;
+
+    const tabs = root.querySelector("[data-tabbed-tabs]");
+    const bounds = content.getBoundingClientRect();
+    const tabsHeight = tabs?.getBoundingClientRect().height ?? 0;
+    const left = bounds.left;
+    const top = bounds.top + tabsHeight;
+    const width = bounds.width;
+    const height = Math.max(0, bounds.height - tabsHeight);
+
+    root.style.setProperty("z-index", "100000", "important");
+    for (const app of this._tabbedApps.values()) {
+      const child = app?.element;
+      if (!child) continue;
+      child.style.setProperty("position", "fixed", "important");
+      child.style.setProperty("left", `${left}px`, "important");
+      child.style.setProperty("top", `${top}px`, "important");
+      child.style.setProperty("width", `${width}px`, "important");
+      child.style.setProperty("height", `${height}px`, "important");
+      child.style.setProperty("z-index", "99999", "important");
+    }
+  }
+
+  _onChildClosed(id) {
+    this.release(id);
+  }
+
+  release(id) {
+    this._tabbedApps.delete(id);
+    if (this._activeId === id) {
+      this._activeId = this._tabbedApps.keys().next().value ?? null;
+    }
+    this._syncChildElements();
+    this._renderTabStrip();
+    this._layoutChildren();
+  }
+
+  _renderTabStrip() {
     const strip = this.element?.querySelector("[data-tabbed-tabs]");
+    const empty = this.element?.querySelector("[data-tabbed-empty]");
     if (!strip) return;
 
     strip.replaceChildren();
+    const doc = this.element.ownerDocument;
 
-    for (const [id, app] of this.tabbedApplications) {
-      const tab = document.createElement("div");
-      tab.className = `tabbed-foundry-tab${id === this.activeApplicationId ? " active" : ""}`;
+    for (const [id, app] of this._tabbedApps) {
+      const tab = doc.createElement("div");
+      tab.className = `tabbed-foundry-tab${id === this._activeId ? " active" : ""}`;
       tab.draggable = true;
+      tab.dataset.appId = id;
+
+      const activate = doc.createElement("button");
+      activate.type = "button";
+      activate.className = "tabbed-foundry-tab-label";
+      activate.textContent = app.title || app.constructor.name || "Aplicação";
+      activate.title = activate.textContent;
+      activate.setAttribute("aria-pressed", String(id === this._activeId));
+      activate.addEventListener("click", () => this.activate(id));
+
+      const close = doc.createElement("button");
+      close.type = "button";
+      close.className = "tabbed-foundry-tab-close";
+      close.textContent = "×";
+      close.title = "Fechar aplicação";
+      close.setAttribute("aria-label", `Fechar ${activate.textContent}`);
+      close.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        try {
+          await app.close();
+        } catch (error) {
+          console.error(`[${MODULE_ID}] Erro ao fechar aplicação pela aba.`, error);
+        }
+      });
+
       tab.addEventListener("dragstart", (event) => {
         event.dataTransfer?.setData("text/plain", id);
         if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
@@ -95,98 +217,57 @@ class TabbedFoundryHost extends TabbedFoundryApplication {
       });
       tab.addEventListener("drop", (event) => {
         event.preventDefault();
-        const sourceId = event.dataTransfer?.getData("text/plain");
-        if (sourceId && sourceId !== id) this._reorderApplications(sourceId, id);
-      });
-
-      const activate = document.createElement("button");
-      activate.type = "button";
-      activate.className = "tabbed-foundry-tab-label";
-      activate.textContent = app.title || app.id;
-      activate.title = activate.textContent;
-      activate.setAttribute("aria-pressed", String(id === this.activeApplicationId));
-      activate.addEventListener("click", () => this.activateApplication(id));
-
-      const close = document.createElement("button");
-      close.type = "button";
-      close.className = "tabbed-foundry-tab-close";
-      close.textContent = "×";
-      close.title = "Fechar aplicação";
-      close.setAttribute("aria-label", `Fechar ${app.title || "aplicação"}`);
-      close.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        await this._closeApplication(id);
+        const draggedId = event.dataTransfer?.getData("text/plain");
+        if (draggedId && draggedId !== id) this._reorderTab(draggedId, id);
       });
 
       tab.append(activate, close);
       strip.append(tab);
     }
 
-    if (this.tabbedApplications.size === 0) {
-      const empty = document.createElement("span");
-      empty.className = "tabbed-foundry-empty";
-      empty.textContent = "Destaque uma aplicação para adicioná-la aqui.";
-      strip.append(empty);
-    }
+    if (empty) empty.hidden = this._tabbedApps.size > 0;
   }
 
-  activateApplication(id) {
-    if (!this.tabbedApplications.has(id)) return;
-    this.activeApplicationId = id;
-    this._syncApplications();
-    this._renderTabs();
+  _reorderTab(draggedId, targetId) {
+    const entries = [...this._tabbedApps.entries()];
+    const from = entries.findIndex(([id]) => id === draggedId);
+    const to = entries.findIndex(([id]) => id === targetId);
+    if (from < 0 || to < 0 || from === to) return;
+    const [entry] = entries.splice(from, 1);
+    entries.splice(to, 0, entry);
+    this._tabbedApps = new Map(entries);
+    this._renderTabStrip();
   }
 
-  _reorderApplications(sourceId, targetId) {
-    const ids = [...this.tabbedApplications.keys()];
-    const sourceIndex = ids.indexOf(sourceId);
-    const targetIndex = ids.indexOf(targetId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
-
-    ids.splice(targetIndex, 0, ids.splice(sourceIndex, 1)[0]);
-    this.tabbedApplications = new Map(ids.map((id) => [id, this.tabbedApplications.get(id)]));
-    this._renderTabs();
+  activate(id) {
+    if (!this._tabbedApps.has(id)) return;
+    this._activeId = id;
+    this._syncChildElements();
+    this._renderTabStrip();
   }
+}
 
-  async _closeApplication(id) {
-    const app = this.tabbedApplications.get(id);
-    if (!app) return;
-
-    this.tabbedApplications.delete(id);
-    if (this.activeApplicationId === id) {
-      this.activeApplicationId = this.tabbedApplications.keys().next().value ?? null;
-    }
-
-    await app.close();
-    this._syncApplications();
-    this._renderTabs();
-  }
-
-  async _onClose(options) {
-    await super._onClose(options);
-    if (host === this) host = null;
-    this.tabbedApplications.clear();
-    this.activeApplicationId = null;
+function isAutoGroupingEnabled() {
+  try {
+    return game.settings.get(MODULE_ID, SETTING_AUTO_GROUP) === true;
+  } catch (error) {
+    console.warn(`[${MODULE_ID}] Não foi possível ler a configuração; usando detach nativo.`, error);
+    return false;
   }
 }
 
 async function getOrCreateHost() {
-  if (host?.rendered) return host;
+  if (host?.rendered && host.window?.windowId) return host;
   if (hostCreation) return hostCreation;
 
   hostCreation = (async () => {
     const candidate = new TabbedFoundryHost();
-
+    host = candidate;
     try {
-      await candidate.render(true);
-
-      // Use the original Foundry method for the host itself.
-      await originalDetachWindow.call(candidate);
-
-      host = candidate;
+      await candidate.ensureDetachedWindow();
       return candidate;
     } catch (error) {
-      console.error(`[${MODULE_ID}] Falha ao criar a janela hospedeira.`, error);
+      if (host === candidate) host = null;
       try {
         await candidate.close();
       } catch (closeError) {
@@ -203,59 +284,93 @@ async function getOrCreateHost() {
   }
 }
 
+async function captureApplication(app, options) {
+  if (pendingCaptures.has(app)) return pendingCaptures.get(app);
+
+  const capturePromise = (async () => {
+    try {
+      const target = await getOrCreateHost();
+      await target.adopt(app, options);
+      return app;
+    } catch (error) {
+      console.error(`[${MODULE_ID}] Falha ao agrupar aplicação; executando detach nativo.`, error);
+      if (host && app.parent === host) {
+        console.warn(`[${MODULE_ID}] A aplicação já foi vinculada à janela hospedeira; mantendo-a aberta.`);
+        return app;
+      }
+      if (host && host._tabbedApps?.size === 0) {
+        try {
+          await host.close();
+        } catch (closeError) {
+          console.warn(`[${MODULE_ID}] Não foi possível fechar a janela hospedeira vazia.`, closeError);
+        }
+        host = null;
+      }
+      return originalDetachWindow.call(app, options);
+    }
+  })();
+
+  pendingCaptures.set(app, capturePromise);
+  try {
+    return await capturePromise;
+  } finally {
+    pendingCaptures.delete(app);
+  }
+}
+
 function installDetachInterceptor() {
-  if (detachInterceptorInstalled) return;
-
   const prototype = ApplicationV2.prototype;
-  originalDetachWindow = prototype.detachWindow;
+  if (prototype[PATCH_FLAG]) return;
 
+  originalDetachWindow = prototype.detachWindow;
   if (typeof originalDetachWindow !== "function") {
-    console.error(`[${MODULE_ID}] ApplicationV2.detachWindow não está disponível. O módulo não interceptará o detach.`);
+    console.error(`[${MODULE_ID}] ApplicationV2.detachWindow não foi encontrado. O módulo não fará interceptação.`);
     return;
   }
 
-  prototype.detachWindow = async function(options = {}) {
-    // The host must use Foundry's original detach implementation.
-    if (this instanceof TabbedFoundryHost) {
-      return originalDetachWindow.call(this, options);
+  prototype.detachWindow = function(options = {}) {
+    if (this instanceof TabbedFoundryHost) return originalDetachWindow.call(this, options);
+    if (!isAutoGroupingEnabled()) return originalDetachWindow.call(this, options);
+
+    if (host && this.parent === host) {
+      const parentHost = host;
+      return originalDetachWindow.call(this, options).then((result) => {
+        parentHost?.release(this.id);
+        return result;
+      });
     }
 
-    // The setting is client-scoped. When disabled, preserve native behavior.
-    if (!game.settings.get(MODULE_ID, SETTING_ENABLED)) {
-      return originalDetachWindow.call(this, options);
-    }
-
-    // Only ApplicationV2 instances can be adopted through renderChild.
-    if (!(this instanceof ApplicationV2)) {
-      return originalDetachWindow.call(this, options);
-    }
-
-    try {
-      const tabHost = await getOrCreateHost();
-      await tabHost.addApplication(this);
-      return this;
-    } catch (error) {
-      console.error(`[${MODULE_ID}] Não foi possível adicionar a aplicação às abas. Usando o detach nativo.`, error);
-      return originalDetachWindow.call(this, options);
-    }
+    if (this.window?.windowId || this.parent) return originalDetachWindow.call(this, options);
+    return captureApplication(this, options);
   };
 
-  detachInterceptorInstalled = true;
+  Object.defineProperty(prototype, PATCH_FLAG, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false
+  });
 }
 
 Hooks.once("init", () => {
-  game.settings.register(MODULE_ID, SETTING_ENABLED, {
-    name: "Agrupar aplicações destacadas",
-    hint: "Quando ativado, aplicações destacadas são enviadas para a janela Tabbed Foundry. Desative para usar o detach nativo do Foundry.",
+  game.settings.register(MODULE_ID, SETTING_AUTO_GROUP, {
+    name: "Agrupar aplicações destacadas automaticamente",
+    hint: "Quando ativado, aplicações destacadas são enviadas para a janela única do Tabbed Foundry. Desative para usar o detach nativo do Foundry.",
     scope: "client",
     config: true,
     type: Boolean,
     default: true
   });
-
-  installDetachInterceptor();
 });
 
 Hooks.once("ready", () => {
-  console.info(`[${MODULE_ID}] Carregado. Agrupamento automático: ${game.settings.get(MODULE_ID, SETTING_ENABLED) ? "ativado" : "desativado"}.`);
+  installDetachInterceptor();
+  game.modules.get(MODULE_ID).api = {
+    get host() { return host; },
+    get enabled() { return isAutoGroupingEnabled(); },
+    async closeHost() {
+      if (host) await host.close();
+    }
+  };
+  console.info(`[${MODULE_ID}] Carregado. Agrupamento automático: ${isAutoGroupingEnabled() ? "ativado" : "desativado"}.`);
 });

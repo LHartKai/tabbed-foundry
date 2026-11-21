@@ -1053,10 +1053,14 @@ async function getOrCreateHost() {
   // A return-to-workspace operation temporarily attaches the host to the main
   // window. Wait for that transfer before deciding whether it needs detaching.
   if (hostCreation) return hostCreation;
-  if (host?.rendered) {
-    await host._transitionQueue;
-    if (!host.window?.windowId) await host.ensureDetachedWindow();
-    return host;
+  const existingHost = host;
+  if (existingHost?.rendered) {
+    await existingHost._transitionQueue;
+    // The last tab may have closed the host while this capture was waiting.
+    // Never reuse a host that was replaced or closed during the await.
+    if (host !== existingHost || !existingHost.rendered) return getOrCreateHost();
+    if (!existingHost.window?.windowId) await existingHost.ensureDetachedWindow();
+    return existingHost;
   }
 
   hostCreation = (async () => {

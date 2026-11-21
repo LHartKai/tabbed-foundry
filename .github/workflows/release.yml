@@ -97,7 +97,9 @@ jobs:
           mkdir -p dist/tabbed-foundry
           rsync -a --exclude='.git' --exclude='.github' --exclude='dist' ./ dist/tabbed-foundry/
           cd dist
-          zip -r "../tabbed-foundry-${{ steps.version.outputs.version }}.zip" tabbed-foundry
+          zip -r "../tabbed-foundry.zip" tabbed-foundry
+          cd ..
+          cp module.json release-module.json
 
       - name: Publish GitHub Release
         env:
@@ -112,7 +114,8 @@ jobs:
           fi
 
           gh release create "$TAG" \
-            "tabbed-foundry-$VERSION.zip" \
+            "tabbed-foundry.zip" \
+            "release-module.json#module.json" \
             --title "Tabbed Foundry $TAG" \
             --generate-notes \
             "${NOTES_ARGS[@]}"
@@ -120,4 +123,5 @@ jobs:
       - name: Report release
         run: |
           echo "Published Tabbed Foundry ${{ steps.version.outputs.tag }}"
-          echo "Download: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}"
+          echo "Manifest: https://github.com/${{ github.repository }}/releases/latest/download/module.json"
+          echo "Download: https://github.com/${{ github.repository }}/releases/latest/download/tabbed-foundry.zip"

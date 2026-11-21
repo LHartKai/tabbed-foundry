@@ -919,6 +919,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       // Reattach the host first so ui.sidebar is resolved in the primary
       // Foundry document, not in the detached Electron window.
       await this.attachWindow();
+      hostAttachedToMain = !this.window?.windowId;
 
       mainSidebar = ui.sidebar;
       if (!(mainSidebar instanceof ApplicationV2)) {
@@ -964,7 +965,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
         if (this._tabbedApps.has(app.id)) {
           this.release(app.id, { restorePosition: true, closeWhenEmpty: false });
         }
-        if (this.rendered && !this.window?.windowId) {
+        if (this.rendered && hostAttachedToMain && !this.window?.windowId) {
           if (this._tabbedApps.size > 0) {
             try {
               await this.detachWindow({});
@@ -995,7 +996,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
         console.error("[" + MODULE_ID + "] Falha ao restaurar a aplicação no Tabbed Foundry.", rollbackError);
       }
 
-      if (hostAttachedToMain && this.rendered && this.element?.ownerDocument === mainDocument) {
+      if (hostAttachedToMain && this.rendered && !this.window?.windowId) {
         try {
           await this.detachWindow({});
           this._setupLayoutObservers();

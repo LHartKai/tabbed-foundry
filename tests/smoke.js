@@ -173,6 +173,16 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /_enqueueTransition\(operation\)/, "state transitions are serialized");
   assert.match(source, /await existingHost\._transitionQueue/, "new captures wait for an active return transition");
   assert.match(source, /_layoutFrameView/, "animation frames are cancelled against their originating Electron view");
+  assert.match(
+    source,
+    /if \(this\._detachingApps\.has\(app\.id\)\) return;/,
+    "a close event emitted during native detach must not release and close the Tabbed host"
+  );
+  assert.match(
+    source,
+    /this\.parent === parent \|\| parent\.children\?\.get\(this\.id\) === this/,
+    "the native detach must sever the parent-child link before the host releases the app"
+  );
   assert.match(source, /if \(hostAttachedToMain && this\.rendered && !this\.window\?\.windowId\)/, "failed reattachment restores the detached host");
   assert.doesNotMatch(source, /MODO DE SEGURANÇA|temporariamente suspenso/, "emergency safe mode is removed");
   assert.doesNotMatch(source, /ApplicationV2\.prototype\.detachWindow\s*=/, "direct prototype monkey-patching stays removed");

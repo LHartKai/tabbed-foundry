@@ -34,6 +34,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._tabbedApps = new Map();
     this._childListeners = new Map();
     this._originalPositions = new Map();
+    this._detachingApps = new Set();
     this._paneContentElements = new Map();
     this._paneSequence = 0;
     this._splitSequence = 0;
@@ -214,6 +215,10 @@ class TabbedFoundryHost extends HandlebarsApplication {
   _decorateChild(app) {
     const element = app?.element;
     if (!element) return;
+    if (this._detachingApps.has(app.id)) {
+      this._clearChildPresentation(app);
+      return;
+    }
     const pane = this._findPaneForApp(app.id);
     const active = !!pane && pane.activeId === app.id;
     element.classList.add("tabbed-foundry-child");
@@ -301,6 +306,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       const bounds = content.getBoundingClientRect();
 
       for (const appId of pane.tabs) {
+        if (this._detachingApps.has(appId)) continue;
         const app = this._tabbedApps.get(appId);
         const child = app?.element;
         if (!child) continue;
@@ -701,6 +707,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
   prepareForNativeDetach(app) {
     if (!this._tabbedApps.has(app.id)) return;
+    this._detachingApps.add(app.id);
     this._clearChildPresentation(app);
     const originalPosition = this._originalPositions.get(app.id);
     if (originalPosition && app.rendered) app.setPosition(originalPosition);
@@ -709,17 +716,21 @@ class TabbedFoundryHost extends HandlebarsApplication {
   _closeWhenEmpty() {
     const view = this.element?.ownerDocument?.defaultView;
     const schedule = view?.setTimeout?.bind(view) ?? setTimeout;
-    schedule(async () => {
+    const check = async (attempt = 0) => {
       if (!this.rendered || this._tabbedApps.size > 0) return;
       const remainingChildren = [...(this.children?.values?.() ?? [])]
         .some(child => child?.rendered && child.parent === this);
-      if (remainingChildren) return;
+      if (remainingChildren) {
+        if (attempt < 4) schedule(() => check(attempt + 1), 50);
+        return;
+      }
       try {
         await this.close();
       } catch (error) {
         console.error("[" + MODULE_ID + "] Não foi possível fechar a janela Tabbed vazia.", error);
       }
-    }, 0);
+    };
+    schedule(() => check(0), 0);
   }
 
   release(id, { restorePosition = true } = {}) {
@@ -738,6 +749,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     if (observed && this._childResizeObserver) this._childResizeObserver.unobserve(observed);
     this._observedChildren.delete(id);
 
+    this._detachingApps.delete(id);
     this._clearChildPresentation(app);
 
     const originalPosition = this._originalPositions.get(id);
@@ -982,6 +994,7 @@ function installDetachInterceptor() {
           return result;
         })
         .catch((error) => {
+          parentHost._detachingApps.delete(this.id);
           parentHost._decorateChild(this);
           parentHost._scheduleLayout();
           throw error;

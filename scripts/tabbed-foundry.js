@@ -1119,30 +1119,36 @@ function installDetachInterceptor() {
 
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, SETTING_AUTO_GROUP, {
-    name: "Agrupar aplicações destacadas automaticamente",
-    hint: "Quando ativado, aplicações destacadas são enviadas para a janela única do Tabbed Foundry. Desative para usar o detach nativo do Foundry.",
+    name: "Agrupar aplicações destacadas automaticamente (suspenso)",
+    hint: "O agrupamento automático está temporariamente suspenso por segurança. O Tabbed Foundry não interceptará ApplicationV2.detachWindow nesta versão; o Foundry manterá o comportamento nativo.",
     scope: "client",
     config: true,
     type: Boolean,
-    default: true
+    default: false
   });
 });
 
 Hooks.once("ready", async () => {
-  installDetachInterceptor();
+  // EMERGENCY SAFE MODE:
+  // Do not patch ApplicationV2.prototype.detachWindow. A previous build
+  // caused applications (notably Journal sheets) to become orphaned or
+  // remain attached to the detached Tabbed window after reattachment.
+  // A full Electron process restart is required to clear an older in-memory
+  // prototype patch; this build deliberately leaves the native method alone.
   try {
-    await getOrCreateWorkspaceAnchor();
+    if (game.settings.get(MODULE_ID, SETTING_AUTO_GROUP) !== false) {
+      await game.settings.set(MODULE_ID, SETTING_AUTO_GROUP, false);
+    }
   } catch (error) {
-    console.error("[" + MODULE_ID + "] Não foi possível preparar o ponto de retorno ao workspace principal.", error);
+    console.warn("[" + MODULE_ID + "] Não foi possível redefinir a opção de agrupamento.", error);
   }
 
   game.modules.get(MODULE_ID).api = {
     get host() { return host; },
-    get workspaceAnchor() { return workspaceAnchor; },
-    get enabled() { return isAutoGroupingEnabled(); },
+    get enabled() { return false; },
     async closeHost() {
       if (host) await host.close();
     }
   };
-  console.info("[" + MODULE_ID + "] Carregado. Agrupamento automático: " + (isAutoGroupingEnabled() ? "ativado" : "desativado") + ".");
+  console.warn("[" + MODULE_ID + "] MODO DE SEGURANÇA: agrupamento automático suspenso; detach nativo preservado.");
 });

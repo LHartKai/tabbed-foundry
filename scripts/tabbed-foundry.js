@@ -1224,6 +1224,9 @@ Hooks.once("ready", async () => {
     get workspaceAnchor() { return workspaceAnchor; },
     get enabled() { return detachInterceptorInstalled && isAutoGroupingEnabled(); },
     get detachInterceptorInstalled() { return detachInterceptorInstalled; },
+    get mejCompatibility() {
+      return game[Symbol.for("tabbed-foundry.integrations")]?.mejCompatibility ?? null;
+    },
     async closeHost() {
       if (host) await host.close();
     }

@@ -2,7 +2,7 @@
   "id": "tabbed-foundry",
   "title": "Tabbed Foundry",
   "description": "Agrupa aplicações destacadas do Foundry VTT em uma única janela com abas.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "authors": [
     {
       "name": "LHartKai"

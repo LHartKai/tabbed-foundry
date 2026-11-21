@@ -1098,8 +1098,19 @@ async function captureApplication(app, options, nativeDetach) {
       return app;
     } catch (error) {
       console.error("[" + MODULE_ID + "] Falha ao agrupar aplicação; executando detach nativo.", error);
-      if (target && target._tabbedApps.has(app.id) && app.parent === target) return app;
 
+      // If renderChild already moved the application into the host, let the
+      // native detach break that parent link before attempting to close the
+      // now-empty host. This avoids closing the application as a host child.
+      if (target && app.parent === target) {
+        const result = await nativeDetach();
+        target.release(app.id, { restorePosition: false });
+        return result;
+      }
+
+      if (target && target._tabbedApps.has(app.id)) {
+        target.release(app.id, { restorePosition: false });
+      }
       if (target && target._tabbedApps.size === 0 && target.rendered) {
         try {
           await target.close();

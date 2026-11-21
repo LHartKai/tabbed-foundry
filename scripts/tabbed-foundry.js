@@ -9,6 +9,9 @@ let workspaceAnchor = null;
 let hostCreation = null;
 let detachInterceptorInstalled = false;
 const pendingCaptures = new WeakMap();
+let activePopupCapture = null;
+let popupCaptureInstalled = false;
+const popupRenderBypass = new WeakSet();
 
 class TabbedFoundryHost extends HandlebarsApplication {
   static DEFAULT_OPTIONS = {
@@ -53,6 +56,8 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._dividerCleanup = null;
     this._transitionQueue = Promise.resolve();
     this._detachingHostPromise = null;
+    this._popupCaptureDocument = null;
+    this._popupCaptureListener = null;
 
     this.addEventListener("close", () => {
       this._removeLayoutObservers();
@@ -170,6 +175,43 @@ class TabbedFoundryHost extends HandlebarsApplication {
     }
   }
 
+  async _adoptPopupApplication(app, options = {}) {
+    if (!(app instanceof ApplicationV2) || app === this) {
+      throw new TypeError("O pop-up precisa ser uma instância ApplicationV2.");
+    }
+
+    return this._enqueueTransition(async () => {
+      if (app.parent === this) return app;
+      if (app.parent || app.rendered) return app;
+
+      await this.ensureDetachedWindow();
+
+      const applyPopupClass = () => app.element?.classList.add("tabbed-foundry-popup");
+      const onRender = () => applyPopupClass();
+      const onClose = () => {
+        app.removeEventListener("render", onRender);
+        app.removeEventListener("close", onClose);
+        app.element?.classList.remove("tabbed-foundry-popup");
+      };
+
+      app.addEventListener("render", onRender);
+      app.addEventListener("close", onClose);
+
+      try {
+        // renderChild keeps the dialog inside this native window and links its
+        // lifecycle to the host without adding it to the user's visible tabs.
+        await this.renderChild(app, options);
+        applyPopupClass();
+        this.bringToFront();
+        return app;
+      } catch (error) {
+        app.removeEventListener("render", onRender);
+        app.removeEventListener("close", onClose);
+        throw error;
+      }
+    });
+  }
+
   _findPane(node, paneId) {
     if (!node) return null;
     if (node.type === "pane") return node.id === paneId ? node : null;
@@ -278,6 +320,28 @@ class TabbedFoundryHost extends HandlebarsApplication {
       view.addEventListener("resize", this._boundLayout);
     }
 
+    const doc = element.ownerDocument;
+    if (this._popupCaptureDocument !== doc) {
+      this._popupCaptureDocument?.removeEventListener("click", this._popupCaptureListener, true);
+      this._popupCaptureDocument = doc;
+      this._popupCaptureListener = (event) => {
+        const sourceApp = [...this._tabbedApps.values()].find(
+          app => app?.rendered && app.element?.contains?.(event.target)
+        );
+        if (!sourceApp) return;
+
+        const previous = activePopupCapture;
+        const capture = { host: this, previous };
+        activePopupCapture = capture;
+        // Keep the context through this click's synchronous handlers only.
+        // Async directory actions establish their own longer-lived context below.
+        Promise.resolve().then(() => {
+          if (activePopupCapture === capture) activePopupCapture = previous;
+        });
+      };
+      doc.addEventListener("click", this._popupCaptureListener, true);
+    }
+
     if (!this._resizeObserver && typeof view.ResizeObserver === "function") {
       this._resizeObserver = new view.ResizeObserver(this._boundLayout);
       this._resizeObserver.observe(content);
@@ -301,6 +365,9 @@ class TabbedFoundryHost extends HandlebarsApplication {
   }
 
   _removeLayoutObservers() {
+    this._popupCaptureDocument?.removeEventListener("click", this._popupCaptureListener, true);
+    this._popupCaptureDocument = null;
+    this._popupCaptureListener = null;
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._childResizeObserver?.disconnect();
@@ -1025,6 +1092,130 @@ class TabbedFoundryHost extends HandlebarsApplication {
   }
 }
 
+function findTabbedHostForDocument(doc) {
+  if (!doc || !host?.rendered || host.element?.ownerDocument !== doc) return null;
+  const sourceIsTabbedChild = [...host._tabbedApps.values()].some(
+    app => app?.rendered && app.element?.ownerDocument === doc
+  );
+  return sourceIsTabbedChild ? host : null;
+}
+
+function withPopupCaptureContext(targetHost, callback, { persistUntilSettled = false } = {}) {
+  if (!targetHost) return callback();
+
+  const previous = activePopupCapture;
+  const capture = { host: targetHost, previous, persistUntilSettled };
+  activePopupCapture = capture;
+
+  let result;
+  try {
+    result = callback();
+  } catch (error) {
+    if (activePopupCapture === capture) activePopupCapture = previous;
+    throw error;
+  }
+
+  if (result && typeof result.then === "function") {
+    return Promise.resolve(result).finally(() => {
+      if (activePopupCapture === capture) activePopupCapture = previous;
+    });
+  }
+
+  if (activePopupCapture === capture) activePopupCapture = previous;
+  return result;
+}
+
+function popupCaptureFromDirectoryAction(wrapped, event, target, ...args) {
+  const doc = target?.ownerDocument ?? event?.currentTarget?.ownerDocument ?? event?.target?.ownerDocument;
+  const targetHost = findTabbedHostForDocument(doc);
+  return withPopupCaptureContext(targetHost, () => wrapped(event, target, ...args), { persistUntilSettled: true });
+}
+
+function installPopupCapture() {
+  if (!game.modules.get("lib-wrapper")?.active || typeof libWrapper === "undefined") {
+    console.warn("[" + MODULE_ID + "] libWrapper indisponível; pop-ups continuarão abrindo no workspace original.");
+    return false;
+  }
+
+  try {
+    libWrapper.register(
+      MODULE_ID,
+      "foundry.applications.api.ApplicationV2.prototype.render",
+      function (wrapped, options = {}, legacyOptions = {}) {
+        const capture = activePopupCapture;
+        if (
+          !capture ||
+          !(this instanceof ApplicationV2) ||
+          this === capture.host ||
+          this.parent ||
+          this.rendered ||
+          popupRenderBypass.has(this) ||
+          !capture.host?.rendered
+        ) {
+          return wrapped(options, legacyOptions);
+        }
+
+        // One-shot click contexts are consumed by the first new application.
+        // Explicit async create actions remain active until their Promise settles.
+        if (!capture.persistUntilSettled && activePopupCapture === capture) {
+          activePopupCapture = capture.previous;
+        }
+        popupRenderBypass.add(this);
+
+        const renderOptions = typeof options === "boolean"
+          ? { ...legacyOptions, force: options }
+          : { ...(options ?? {}), ...(legacyOptions ?? {}) };
+
+        return capture.host._adoptPopupApplication(this, renderOptions)
+          .finally(() => popupRenderBypass.delete(this));
+      },
+      "WRAPPER"
+    );
+
+    const directoryTargets = [
+      "foundry.applications.sidebar.tabs.JournalDirectory.prototype._onCreateEntry",
+      "foundry.applications.sidebar.tabs.JournalDirectory.prototype._onCreateFolder"
+    ];
+    for (const target of directoryTargets) {
+      libWrapper.register(
+        MODULE_ID,
+        target,
+        function (wrapped, event, button, ...args) {
+          return popupCaptureFromDirectoryAction(wrapped.bind(this), event, button, ...args);
+        },
+        "WRAPPER"
+      );
+    }
+
+    const documentDialogTargets = [
+      "JournalEntry.prototype.constructor.createDialog",
+      "JournalEntryPage.prototype.constructor.createDialog",
+      "foundry.applications.sheets.journal.JournalEntrySheet.prototype.createPageDialog"
+    ];
+    for (const target of documentDialogTargets) {
+      libWrapper.register(
+        MODULE_ID,
+        target,
+        function (wrapped, ...args) {
+          const sourceDocument = this?.element?.ownerDocument;
+          const targetHost = activePopupCapture?.host ?? findTabbedHostForDocument(sourceDocument);
+          return withPopupCaptureContext(targetHost, () => wrapped(...args), {
+            persistUntilSettled: true
+          });
+        },
+        "WRAPPER"
+      );
+    }
+
+    popupCaptureInstalled = true;
+    console.info("[" + MODULE_ID + "] Captura de pop-ups ApplicationV2 instalada para ações do diretório de Journals.");
+    return true;
+  } catch (error) {
+    console.error("[" + MODULE_ID + "] Não foi possível instalar a captura de pop-ups; o comportamento nativo foi preservado.", error);
+    return false;
+  }
+}
+
 function dividerPointerCapture(element, pointerId) {
   try {
     element?.setPointerCapture?.(pointerId);
@@ -1229,6 +1420,7 @@ Hooks.once("init", () => {
   });
 
   installDetachInterceptor();
+  installPopupCapture();
 });
 
 Hooks.once("ready", async () => {
@@ -1243,6 +1435,7 @@ Hooks.once("ready", async () => {
     get workspaceAnchor() { return workspaceAnchor; },
     get enabled() { return detachInterceptorInstalled && isAutoGroupingEnabled(); },
     get detachInterceptorInstalled() { return detachInterceptorInstalled; },
+    get popupCaptureInstalled() { return popupCaptureInstalled; },
     get mejCompatibility() {
       return game[Symbol.for("tabbed-foundry.integrations")]?.mejCompatibility ?? null;
     },

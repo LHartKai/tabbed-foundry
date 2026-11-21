@@ -18,6 +18,11 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   ]);
 
   class ApplicationV2 {
+    async render(options = {}) {
+      this.rendered = true;
+      this.lastRenderOptions = options;
+      return this;
+    }
     async detachWindow(options = {}) {
       this.nativeDetachCalls = (this.nativeDetachCalls ?? 0) + 1;
       this.lastNativeDetachOptions = options;
@@ -25,6 +30,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     }
   }
 
+  class DialogV2 extends ApplicationV2 {}
   const nativeDetachMethod = ApplicationV2.prototype.detachWindow;
   const libWrapper = {
     register(packageId, target, fn, type) {
@@ -39,6 +45,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
       applications: {
         api: {
           ApplicationV2,
+          DialogV2,
           HandlebarsApplicationMixin: Base => Base
         }
       }
@@ -109,7 +116,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   // The wrapper must be registered through libWrapper without replacing the
   // ApplicationV2 prototype method directly.
   const env = await boot();
-  assert.equal(env.registrations.length, 1, "one detach wrapper is registered");
+  assert.equal(env.registrations.length, 7, "detach and six popup-capture wrappers are registered");
   assert.equal(env.registrations[0].packageId, "tabbed-foundry");
   assert.equal(
     env.registrations[0].target,
@@ -117,6 +124,18 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     "wrapper targets the Foundry v14 ApplicationV2 API"
   );
   assert.equal(env.registrations[0].type, "MIXED");
+  assert.ok(
+    env.registrations.some(entry => entry.target === "foundry.applications.api.ApplicationV2.prototype.render"),
+    "new ApplicationV2 pop-ups are routed through the current Tabbed action context"
+  );
+  assert.ok(
+    env.registrations.some(entry => entry.target.endsWith("JournalDirectory.prototype._onCreateEntry")) &&
+    env.registrations.some(entry => entry.target.endsWith("JournalDirectory.prototype._onCreateFolder")) &&
+    env.registrations.some(entry => entry.target === "JournalEntry.prototype.constructor.createDialog") &&
+    env.registrations.some(entry => entry.target === "JournalEntryPage.prototype.constructor.createDialog") &&
+    env.registrations.some(entry => entry.target.endsWith("JournalEntrySheet.prototype.createPageDialog")),
+    "journal entry, folder and page creation actions establish popup capture context"
+  );
   assert.equal(
     env.ApplicationV2.prototype.detachWindow,
     env.nativeDetachMethod,
@@ -189,6 +208,10 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.doesNotMatch(source, /MODO DE SEGURANÇA|temporariamente suspenso/, "emergency safe mode is removed");
   assert.doesNotMatch(source, /ApplicationV2\.prototype\.detachWindow\s*=/, "direct prototype monkey-patching stays removed");
 
+  assert.ok(
+    source.includes('doc.addEventListener("click", this._popupCaptureListener, true);'),
+    "clicks inside a Tabbed child establish a one-shot popup capture context"
+  );
   assert.ok(
     source.includes("parent.release(this.id, { restorePosition: false, closeWhenEmpty: false })"),
     "a native detach must not auto-close its host while Foundry is transferring the child window"

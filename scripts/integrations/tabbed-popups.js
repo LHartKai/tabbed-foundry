@@ -61,8 +61,6 @@ function unbindDocument(doc) {
 
 function bindHostDocument(targetHost, doc) {
   if (!targetHost || !doc) return;
-
-  // The host moves between documents when Foundry detaches or re-attaches it.
   for (const entry of [...documentBindings]) {
     if (entry.binding.host === targetHost && entry.doc !== doc) unbindDocument(entry.doc);
   }
@@ -73,12 +71,9 @@ function bindHostDocument(targetHost, doc) {
       app => app?.rendered && app.element?.ownerDocument === doc && app.element?.contains?.(event.target)
     );
     if (!sourceApp) return;
-
     const previous = activePopupCapture;
     const capture = { host: targetHost, previous, persistUntilSettled: false };
     activePopupCapture = capture;
-    // Keep the context through synchronous handlers and their microtasks.
-    // Directory actions below keep it alive for the full returned Promise.
     doc.defaultView?.setTimeout(() => {
       if (activePopupCapture === capture) activePopupCapture = previous;
     }, 0);
@@ -106,12 +101,14 @@ function normalizeRenderOptions(options, legacyOptions) {
 }
 
 function renderPopupInHost(app, targetHost, options, nativeRender) {
-  if (!(app instanceof DialogV2) || app.parent || app.rendered || popupRenderBypass.has(app) || !targetHost?.rendered) {
-    return nativeRender();
-  }
+  if (!(app instanceof DialogV2) || popupRenderBypass.has(app) || !targetHost?.rendered) return nativeRender();
+  if (app.parent || app.rendered) return app;
+
   return targetHost._enqueueTransition(async () => {
-    if (app.parent || app.rendered) return nativeRender();
+    if (app.parent || app.rendered) return app;
     await targetHost.ensureDetachedWindow();
+    if (!targetHost.rendered) return nativeRender();
+
     popupRenderBypass.add(app);
     try {
       await targetHost.renderChild(app, options);
@@ -148,7 +145,7 @@ function installPopupCapture() {
         const renderOptions = normalizeRenderOptions(options, legacyOptions);
         return renderPopupInHost(this, capture.host, renderOptions, () => wrapped(options, legacyOptions));
       },
-      "WRAPPER"
+      "MIXED"
     );
     popupCaptureInstalled = true;
   } catch (error) {
@@ -156,8 +153,6 @@ function installPopupCapture() {
     return false;
   }
 
-  // Directory wrappers are deliberately separate: a missing optional target
-  // must never disable the DialogV2 wrapper or affect native Journal creation.
   const directoryTargets = [
     "foundry.applications.sidebar.DocumentDirectory.prototype._onCreateEntry",
     "foundry.applications.sidebar.DocumentDirectory.prototype._onCreateFolder"

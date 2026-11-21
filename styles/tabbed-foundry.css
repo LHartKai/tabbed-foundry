@@ -227,7 +227,8 @@
   border: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
-  pointer-events: none !important;
+  /* Keep the zero-sized anchor hit-testable by default so any child it
+     manages can explicitly retain normal interaction. */
   z-index: 0 !important;
 }
 

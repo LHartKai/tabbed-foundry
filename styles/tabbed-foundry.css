@@ -368,3 +368,11 @@
   font-size: 0.72rem;
   opacity: 0.7;
 }
+
+
+/* Drop a tab on the host titlebar to return that application to Foundry. */
+.tabbed-foundry-host > .window-header.tabbed-foundry-return-drop-active {
+  outline: 2px dashed var(--color-border-highlight, #c9a66b);
+  outline-offset: -3px;
+  background: var(--color-hover, rgba(201, 166, 107, 0.22)) !important;
+}

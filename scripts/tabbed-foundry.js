@@ -451,28 +451,6 @@ class TabbedFoundryHost extends HandlebarsApplication {
           this._adoptDraggedApplication(draggedId, node.id);
         }
       });
-      // Dropping on the empty part of the tab strip means append/reorder in this pane,
-      // not detach the application into a separate native window.
-      tabs.addEventListener("dragover", (event) => {
-        const draggedId = this._draggedAppId(event);
-        if (!draggedId || !this._tabbedApps.has(draggedId) || event.target?.closest?.(".tabbed-foundry-tab")) return;
-        event.preventDefault();
-        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-        tabs.classList.add("drag-over");
-      });
-      tabs.addEventListener("dragleave", (event) => {
-        if (!tabs.contains(event.relatedTarget)) tabs.classList.remove("drag-over");
-      });
-      tabs.addEventListener("drop", (event) => {
-        const draggedId = this._draggedAppId(event);
-        if (!draggedId || !this._tabbedApps.has(draggedId) || event.target?.closest?.(".tabbed-foundry-tab")) return;
-        event.preventDefault();
-        event.stopPropagation();
-        tabs.classList.remove("drag-over");
-        this._finishDragSession(true);
-        this._dropOnTabStrip(draggedId, node.id);
-      });
-
       for (const appId of node.tabs) {
         const app = this._tabbedApps.get(appId);
         if (!app) continue;

@@ -1,8 +1,25 @@
 /* The host owns one detached Foundry window. Children remain registered via
    ApplicationV2.renderChild and are positioned over the host content area. */
+/*
+ * Foundry v14 applies backdrop-filter blur to ApplicationV2 surfaces.
+ * The Tabbed Foundry host sits above its child application, so its glass
+ * surface would blur the child behind it. Disable that effect only for the
+ * host window; other Foundry applications keep their normal appearance.
+ */
+.tabbed-foundry-host,
+.tabbed-foundry-host::before,
+.tabbed-foundry-host::after,
+.tabbed-foundry-host > .window-content,
+.tabbed-foundry-host > .window-content::before,
+.tabbed-foundry-host > .window-content::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  filter: none !important;
+  background: transparent !important;
+}
+
 .tabbed-foundry-host {
   z-index: 100000 !important;
-  background: transparent !important;
 }
 
 .tabbed-foundry-host > .window-content {
@@ -11,7 +28,6 @@
   min-height: 0;
   overflow: hidden;
   padding: 0;
-  background: transparent !important;
 }
 
 .tabbed-foundry-host .tabbed-foundry-shell {

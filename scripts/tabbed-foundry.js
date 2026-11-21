@@ -9,6 +9,9 @@ let workspaceAnchor = null;
 let hostCreation = null;
 let detachInterceptorInstalled = false;
 const pendingCaptures = new WeakMap();
+const detachedFromTabbedApps = new WeakSet();
+const patchedMejCloseRoots = new WeakSet();
+let attachInterceptorInstalled = false;
 let activePopupCapture = null;
 let popupCaptureInstalled = false;
 const popupRenderBypass = new WeakSet();
@@ -50,7 +53,6 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._childResizeObserver = null;
     this._observedView = null;
     this._observedChildren = new Map();
-    this._patchedMejCloseButtons = new WeakSet();
     this._layoutFrame = null;
     this._layoutFrameView = null;
     this._dividerCleanup = null;
@@ -876,19 +878,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
   _applyOptionalIntegrations(app) {
     if (!game.modules.get("monks-enhanced-journal")?.active) return;
     if (app.id !== "MonksEnhancedJournal" && app.constructor?.name !== "EnhancedJournal") return;
-
-    const root = app.element;
-    if (!root) return;
-
-    // Monk's Enhanced Journal registers its own close-page handler on
-    // .journal-tab .close. The event then bubbles to .journal-tab, whose
-    // click handler activates the page being removed. Stop only that bubbling
-    // after Monk's own button handler has run; do not cancel the click itself.
-    for (const button of root.querySelectorAll(".journal-tab .close")) {
-      if (this._patchedMejCloseButtons.has(button)) continue;
-      button.addEventListener("click", (event) => event.stopPropagation());
-      this._patchedMejCloseButtons.add(button);
-    }
+    installMejTabCloseCapture(app);
   }
 
   _renderTabContextMenu(event, app) {
@@ -982,52 +972,30 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
     const originalPosition = this._originalPositions.get(app.id);
     let mainSidebar = null;
-    let mainDocument = null;
-    let hostAttachedToMain = false;
-    let appMovedToMain = false;
 
     try {
-      // Keep the host layout engine from repositioning this child while
-      // the host is temporarily attached to the primary workspace.
+      // Move only the selected application. Do not attach the Tabbed host:
+      // Foundry would bring all of its children back with it, creating a race
+      // where the selected Journal can remain attached to the Tabbed window.
       this._detachingApps.add(app.id);
       this._clearChildPresentation(app);
-      if (originalPosition && app.rendered) app.setPosition(originalPosition);
 
-      // Reattach the host first so ui.sidebar is resolved in the primary
-      // Foundry document, not in the detached Electron window.
-      await this.attachWindow();
-      hostAttachedToMain = !this.window?.windowId;
-
-      mainSidebar = ui.sidebar;
+      mainSidebar = ui.sidebar instanceof ApplicationV2 ? ui.sidebar : workspaceAnchor;
       if (!(mainSidebar instanceof ApplicationV2)) {
         throw new Error("A Sidebar do workspace principal não está disponível como ApplicationV2.");
       }
       if (!mainSidebar.rendered) await mainSidebar.render({ force: true });
-      mainDocument = mainSidebar.element?.ownerDocument;
-      if (!mainDocument || this.element?.ownerDocument !== mainDocument) {
-        throw new Error("A janela Tabbed não foi reanexada ao documento principal do Foundry.");
-      }
-      hostAttachedToMain = true;
-      this._setupLayoutObservers();
-
       workspaceAnchor = mainSidebar;
-      await mainSidebar.renderChild(app);
+
+      if (originalPosition && app.rendered) app.setPosition(originalPosition);
+      await attachApplicationToMainWorkspace(app);
+
       if (app.parent !== mainSidebar) {
         throw new Error("O Foundry não confirmou a transferência para a Sidebar principal.");
       }
-      appMovedToMain = true;
 
-      // Remove only the selected application. Do not close the host yet:
-      // remaining children need the host to be detached back into its own window.
       this.release(app.id, { restorePosition: true, closeWhenEmpty: false });
-
-      if (this._tabbedApps.size > 0) {
-        await this.detachWindow({});
-        this._setupLayoutObservers();
-        this._scheduleLayout();
-      } else {
-        await this.close();
-      }
+      if (this._tabbedApps.size === 0 && this.rendered) await this.close();
 
       mainSidebar.bringToFront();
       app.bringToFront();
@@ -1036,31 +1004,29 @@ class TabbedFoundryHost extends HandlebarsApplication {
       this._detachingApps.delete(app.id);
       console.error("[" + MODULE_ID + "] Falha ao devolver aplicação ao workspace principal.", error);
 
-      if (appMovedToMain || (mainSidebar && app.parent === mainSidebar)) {
-        // The application is already in the main Foundry window. Keep that
-        // success even if the remaining Tabbed window could not be detached.
+      // If renderChild moved the app successfully, never move it back just
+      // because final host cleanup failed. Remove any stale old-parent entry
+      // before closing an empty host.
+      if (mainSidebar && app.parent === mainSidebar) {
+        if (this.children?.get(app.id) === app) this.children.delete(app.id);
         if (this._tabbedApps.has(app.id)) {
           this.release(app.id, { restorePosition: true, closeWhenEmpty: false });
         }
-        if (this.rendered && hostAttachedToMain && !this.window?.windowId) {
-          if (this._tabbedApps.size > 0) {
-            try {
-              await this.detachWindow({});
-              this._setupLayoutObservers();
-              this._scheduleLayout();
-            } catch (detachError) {
-              console.error("[" + MODULE_ID + "] A aplicação voltou ao Foundry, mas a janela Tabbed não conseguiu voltar a destacar.", detachError);
-            }
-          } else {
+        if (this._tabbedApps.size === 0 && this.rendered) {
+          try {
             await this.close();
+          } catch (closeError) {
+            console.error("[" + MODULE_ID + "] A aplicação voltou ao Foundry, mas o host vazio não pôde ser fechado.", closeError);
           }
         }
-        ui.notifications?.warn("A aplicação voltou ao Foundry, mas a janela Tabbed precisou permanecer aberta.");
+        mainSidebar.bringToFront();
+        app.bringToFront();
+        ui.notifications?.warn("A aplicação voltou ao Foundry, mas ocorreu um erro ao finalizar a janela Tabbed.");
         return app;
       }
 
-      // Roll back to the Tabbed host if the transfer did not reach the main
-      // Sidebar. The current pane tree and tab identity are preserved.
+      // The transfer did not complete. Restore the application to its original
+      // host and preserve the current tab/layout state.
       try {
         if (app.parent !== this) await this.renderChild(app);
         if (!this._tabbedApps.has(app.id)) {
@@ -1072,16 +1038,6 @@ class TabbedFoundryHost extends HandlebarsApplication {
       } catch (rollbackError) {
         console.error("[" + MODULE_ID + "] Falha ao restaurar a aplicação no Tabbed Foundry.", rollbackError);
       }
-
-      if (hostAttachedToMain && this.rendered && !this.window?.windowId) {
-        try {
-          await this.detachWindow({});
-          this._setupLayoutObservers();
-          this._scheduleLayout();
-        } catch (detachError) {
-          console.error("[" + MODULE_ID + "] Não foi possível restaurar a janela externa do Tabbed Foundry.", detachError);
-        }
-      }
       throw error;
     }
   }
@@ -1090,6 +1046,69 @@ class TabbedFoundryHost extends HandlebarsApplication {
     if (!this._tabbedApps.has(app.id)) return;
     await app.detachWindow();
   }
+}
+
+function installMejTabCloseCapture(app) {
+  const root = app?.element;
+  if (!root || patchedMejCloseRoots.has(root)) return false;
+
+  // MEJ 14.02 binds a click handler to each .journal-tab and another handler
+  // to the nested .close element. The parent handler can reactivate a tab that
+  // has just been removed. Capture the close click first, invoke Monk's own
+  // removeTab method, and stop the event before the parent activation handler.
+  root.addEventListener("click", async (event) => {
+    const closeControl = event.target?.closest?.(".journal-tab .close");
+    if (!closeControl || !root.contains(closeControl)) return;
+
+    const tabElement = closeControl.closest(".journal-tab");
+    const tabId = tabElement?.dataset?.tabid;
+    const tab = app.tabs?.find(candidate => candidate.id == tabId);
+    if (!tab || typeof app.removeTab !== "function") return;
+
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+
+    try {
+      await app.removeTab(tab, event);
+    } catch (error) {
+      console.error("[" + MODULE_ID + "] Não foi possível fechar a guia do Monk's Enhanced Journal.", error);
+      ui.notifications?.error("Não foi possível fechar esta guia do Monk's Enhanced Journal.");
+    }
+  }, true);
+
+  patchedMejCloseRoots.add(root);
+  return true;
+}
+
+async function attachApplicationToMainWorkspace(app, options = {}) {
+  const target = ui.sidebar instanceof ApplicationV2 ? ui.sidebar : workspaceAnchor;
+  if (!(target instanceof ApplicationV2)) {
+    throw new Error("Não foi possível localizar o workspace principal do Foundry.");
+  }
+  if (!target.rendered) await target.render({ force: true });
+
+  const previousParent = app.parent;
+  await target.renderChild(app, options);
+  if (app.parent !== target) {
+    throw new Error("O Foundry não confirmou a reanexação ao workspace principal.");
+  }
+
+  // renderChild should replace the old parent relationship. Remove an orphaned
+  // entry defensively so closing the old host cannot close the moved app.
+  if (previousParent && previousParent !== target && previousParent.children?.get(app.id) === app) {
+    previousParent.children.delete(app.id);
+  }
+
+  detachedFromTabbedApps.delete(app);
+  workspaceAnchor = target;
+  target.bringToFront?.();
+  app.bringToFront?.();
+  return app;
+}
+
+function rememberTabbedDetach(app) {
+  detachedFromTabbedApps.add(app);
 }
 
 function findTabbedHostForDocument(doc) {
@@ -1129,6 +1148,31 @@ function popupCaptureFromDirectoryAction(wrapped, event, target, ...args) {
   const doc = target?.ownerDocument ?? event?.currentTarget?.ownerDocument ?? event?.target?.ownerDocument;
   const targetHost = findTabbedHostForDocument(doc);
   return withPopupCaptureContext(targetHost, () => wrapped(event, target, ...args), { persistUntilSettled: true });
+}
+
+function installAttachInterceptor() {
+  if (!game.modules.get("lib-wrapper")?.active || typeof libWrapper === "undefined") {
+    console.warn("[" + MODULE_ID + "] libWrapper indisponível; a reanexação nativa de aplicações destacadas do Tabbed não será interceptada.");
+    return false;
+  }
+
+  try {
+    libWrapper.register(
+      MODULE_ID,
+      "foundry.applications.api.ApplicationV2.prototype.attachWindow",
+      function (wrapped, options = {}) {
+        if (!detachedFromTabbedApps.has(this)) return wrapped(options);
+        return attachApplicationToMainWorkspace(this, options);
+      },
+      "MIXED"
+    );
+    attachInterceptorInstalled = true;
+    console.info("[" + MODULE_ID + "] Reanexação de aplicações destacadas do Tabbed direcionada ao workspace principal.");
+    return true;
+  } catch (error) {
+    console.error("[" + MODULE_ID + "] Não foi possível instalar a interceptação de attachWindow.", error);
+    return false;
+  }
 }
 
 function installPopupCapture() {
@@ -1369,6 +1413,7 @@ function installDetachInterceptor() {
               // Keep the detached host alive after a child receives its own native
               // window. Closing the host here can race Foundry's window transfer
               // and cascade a close into the just-detached application.
+              rememberTabbedDetach(this);
               parent.release(this.id, { restorePosition: false, closeWhenEmpty: false });
               return result;
             } catch (error) {
@@ -1420,6 +1465,7 @@ Hooks.once("init", () => {
   });
 
   installDetachInterceptor();
+  installAttachInterceptor();
   installPopupCapture();
 });
 
@@ -1435,6 +1481,7 @@ Hooks.once("ready", async () => {
     get workspaceAnchor() { return workspaceAnchor; },
     get enabled() { return detachInterceptorInstalled && isAutoGroupingEnabled(); },
     get detachInterceptorInstalled() { return detachInterceptorInstalled; },
+    get attachInterceptorInstalled() { return attachInterceptorInstalled; },
     get popupCaptureInstalled() { return popupCaptureInstalled; },
     get mejCompatibility() {
       return game[Symbol.for("tabbed-foundry.integrations")]?.mejCompatibility ?? null;

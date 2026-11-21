@@ -18,6 +18,10 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   ]);
 
   class ApplicationV2 {
+    constructor() {
+      this.children = new Map();
+      this.rendered = false;
+    }
     async render(options = {}) {
       this.rendered = true;
       this.lastRenderOptions = options;
@@ -27,6 +31,22 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
       this.nativeDetachCalls = (this.nativeDetachCalls ?? 0) + 1;
       this.lastNativeDetachOptions = options;
       return "native-detach";
+    }
+    async attachWindow(options = {}) {
+      this.nativeAttachCalls = (this.nativeAttachCalls ?? 0) + 1;
+      this.lastNativeAttachOptions = options;
+      return "native-attach";
+    }
+    async renderChild(app, options = {}) {
+      if (app.parent?.children?.get(app.id) === app) app.parent.children.delete(app.id);
+      this.children.set(app.id, app);
+      app.parent = this;
+      app.rendered = true;
+      app.lastParentRenderOptions = options;
+      return app;
+    }
+    bringToFront() {
+      this.broughtToFront = true;
     }
   }
 
@@ -116,7 +136,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   // The wrapper must be registered through libWrapper without replacing the
   // ApplicationV2 prototype method directly.
   const env = await boot();
-  assert.equal(env.registrations.length, 7, "detach and six popup-capture wrappers are registered");
+  assert.equal(env.registrations.length, 8, "two lifecycle and six popup-capture wrappers are registered");
   assert.equal(env.registrations[0].packageId, "tabbed-foundry");
   assert.equal(
     env.registrations[0].target,
@@ -124,6 +144,10 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     "wrapper targets the Foundry v14 ApplicationV2 API"
   );
   assert.equal(env.registrations[0].type, "MIXED");
+  assert.ok(
+    env.registrations.some(entry => entry.target === "foundry.applications.api.ApplicationV2.prototype.attachWindow"),
+    "native reattachment of a child previously detached from Tabbed returns to the main workspace"
+  );
   assert.ok(
     env.registrations.some(entry => entry.target === "foundry.applications.api.ApplicationV2.prototype.render"),
     "new ApplicationV2 pop-ups are routed through the current Tabbed action context"
@@ -204,7 +228,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     /this\.parent === parent \|\| parent\.children\?\.get\(this\.id\) === this/,
     "the native detach must sever the parent-child link before the host releases the app"
   );
-  assert.match(source, /if \(hostAttachedToMain && this\.rendered && !this\.window\?\.windowId\)/, "failed reattachment restores the detached host");
+  assert.ok(source.includes("await attachApplicationToMainWorkspace(app)"), "reattachment moves the selected app directly to the main workspace");
   assert.doesNotMatch(source, /MODO DE SEGURANÇA|temporariamente suspenso/, "emergency safe mode is removed");
   assert.doesNotMatch(source, /ApplicationV2\.prototype\.detachWindow\s*=/, "direct prototype monkey-patching stays removed");
 
@@ -220,6 +244,97 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     stylesheet.includes(".tabbed-foundry-child {\n  /* The child inherits pointer-events:none from the transparent host surface. */\n  pointer-events: auto !important;"),
     "interactive child applications must restore pointer events inside the transparent host"
   );
+
+  // Reattaching an app replaces the old parent link rather than restoring it.
+  const mainWorkspace = new env.ApplicationV2();
+  mainWorkspace.rendered = true;
+  mainWorkspace.children = new Map();
+  mainWorkspace.renderChild = async (app, options = {}) => {
+    mainWorkspace.children.set(app.id, app);
+    app.parent = mainWorkspace;
+    app.rendered = true;
+    app.lastParentRenderOptions = options;
+    return app;
+  };
+  env.context.ui.sidebar = mainWorkspace;
+
+  const formerHost = new env.ApplicationV2();
+  const returnedApp = new env.ApplicationV2();
+  returnedApp.id = "returned-journal";
+  returnedApp.parent = formerHost;
+  formerHost.children.set(returnedApp.id, returnedApp);
+  const returned = await env.context.attachApplicationToMainWorkspace(returnedApp, { focus: true });
+  assert.equal(returned, returnedApp);
+  assert.equal(returnedApp.parent, mainWorkspace, "returned Journal is parented to the main workspace");
+  assert.equal(mainWorkspace.children.get(returnedApp.id), returnedApp);
+  assert.equal(formerHost.children.has(returnedApp.id), false, "old Tabbed parent no longer retains the app");
+  assert.equal(returnedApp.lastParentRenderOptions.focus, true);
+
+  // Native attachWindow for an app last detached from Tabbed is routed to the
+  // primary workspace instead of Foundry restoring its remembered Tabbed parent.
+  const nativeReturnedApp = new env.ApplicationV2();
+  nativeReturnedApp.id = "native-returned-journal";
+  env.context.rememberTabbedDetach(nativeReturnedApp);
+  const attachWrapper = env.registrations.find(
+    entry => entry.target === "foundry.applications.api.ApplicationV2.prototype.attachWindow"
+  ).fn;
+  let nativeAttachCalled = false;
+  const nativeAttachResult = await attachWrapper.call(
+    nativeReturnedApp,
+    async () => { nativeAttachCalled = true; return "native-attach"; },
+    { focus: true }
+  );
+  assert.equal(nativeAttachResult, nativeReturnedApp);
+  assert.equal(nativeAttachCalled, false, "Foundry's remembered-parent attach is bypassed for Tabbed children");
+  assert.equal(nativeReturnedApp.parent, mainWorkspace);
+  assert.equal(mainWorkspace.children.get(nativeReturnedApp.id), nativeReturnedApp);
+
+  // The MEJ close X is handled once at the root capture phase. Its own method
+  // runs, while the click never reaches the parent .journal-tab activation.
+  const closeControl = {
+    closest(selector) {
+      if (selector === ".journal-tab .close") return this;
+      if (selector === ".journal-tab") return tabElement;
+      return null;
+    }
+  };
+  const tabElement = { dataset: { tabid: "mej-tab-to-close" } };
+  const closeListeners = new Map();
+  const closeRoot = {
+    addEventListener(type, callback, capture) { closeListeners.set(type, { callback, capture }); },
+    contains(element) { return element === closeControl; }
+  };
+  const closedTabs = [];
+  const mejApp = {
+    element: closeRoot,
+    tabs: [{ id: "mej-tab-to-close" }],
+    async removeTab(tab, event) { closedTabs.push({ id: tab.id, event }); }
+  };
+  assert.equal(env.context.installMejTabCloseCapture(mejApp), true);
+  assert.equal(closeListeners.get("click").capture, true, "MEJ close interception runs in capture phase");
+  let defaultPrevented = false;
+  let propagationStopped = false;
+  let immediatePropagationStopped = false;
+  const closeEvent = {
+    target: { closest: selector => selector === ".journal-tab .close" ? closeControl : null },
+    preventDefault() { defaultPrevented = true; },
+    stopPropagation() { propagationStopped = true; },
+    stopImmediatePropagation() { immediatePropagationStopped = true; }
+  };
+  await closeListeners.get("click").callback(closeEvent);
+  assert.equal(closedTabs.length, 1, "MEJ's removeTab method runs exactly once");
+  assert.equal(closedTabs[0].id, "mej-tab-to-close");
+  assert.equal(defaultPrevented, true);
+  assert.equal(propagationStopped, true);
+  assert.equal(immediatePropagationStopped, true);
+  assert.ok(source.includes("await app.removeTab(tab, event)"), "MEJ close capture calls Monk's original removal routine");
+
+  const returnMethod = source.slice(
+    source.indexOf("async _returnApplicationToWorkspaceNow"),
+    source.indexOf("async _detachApplicationToNativeWindow")
+  );
+  assert.ok(returnMethod.includes("await attachApplicationToMainWorkspace(app)"));
+  assert.doesNotMatch(returnMethod, /this\.attachWindow\(|this\.detachWindow\(/, "returning one tab no longer reattaches and re-detaches the entire Tabbed host");
 
   console.log("Tabbed Foundry smoke tests passed.");
 })().catch(error => {

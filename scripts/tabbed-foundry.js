@@ -447,7 +447,9 @@ class TabbedFoundryHost extends HandlebarsApplication {
       tabs.setAttribute("aria-label", "Abas do painel");
       tabs.addEventListener("dragover", (event) => {
         const draggedId = this._draggedAppId(event);
-        if (!draggedId || !this._canAcceptDraggedApplication(draggedId) || event.target?.closest?.(".tabbed-foundry-tab")) return;
+        if (!this._hasTabbedFoundryDrag(event) ||
+            (draggedId && !this._canAcceptDraggedApplication(draggedId)) ||
+            event.target?.closest?.(".tabbed-foundry-tab")) return;
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
         tabs.classList.add("drag-over");
@@ -491,7 +493,9 @@ class TabbedFoundryHost extends HandlebarsApplication {
         });
         tab.addEventListener("dragover", (event) => {
           const draggedId = this._draggedAppId(event);
-          if (!draggedId || draggedId === appId || !this._canAcceptDraggedApplication(draggedId)) return;
+          if (!this._hasTabbedFoundryDrag(event) ||
+              draggedId === appId ||
+              (draggedId && !this._canAcceptDraggedApplication(draggedId))) return;
           event.preventDefault();
           if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
           const dropZone = this._tabDropZone(event, tab);
@@ -693,6 +697,11 @@ class TabbedFoundryHost extends HandlebarsApplication {
       event.dataTransfer?.getData("text/plain") ||
       this._dragSession?.app?.id ||
       null;
+  }
+
+  _hasTabbedFoundryDrag(event) {
+    if (this._dragSession?.app) return true;
+    return Array.from(event.dataTransfer?.types ?? []).includes("application/x-tabbed-foundry-app");
   }
 
   _canAcceptDraggedApplication(appId) {

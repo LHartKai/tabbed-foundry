@@ -8,6 +8,7 @@ const POPUP_CLASS = "tabbed-foundry-popup";
 const DialogV2 = foundry.applications.api.DialogV2;
 const popupRenderBypass = new WeakSet();
 const boundDocuments = new WeakMap();
+const documentBindings = new Set();
 let activePopupCapture = null;
 let popupCaptureInstalled = false;
 
@@ -26,11 +27,9 @@ function findHostForDocument(doc) {
 
 function withPopupCaptureContext(targetHost, callback, { persistUntilSettled = false } = {}) {
   if (!targetHost) return callback();
-
   const previous = activePopupCapture;
   const capture = { host: targetHost, previous, persistUntilSettled };
   activePopupCapture = capture;
-
   let result;
   try {
     result = callback();
@@ -38,19 +37,36 @@ function withPopupCaptureContext(targetHost, callback, { persistUntilSettled = f
     if (activePopupCapture === capture) activePopupCapture = previous;
     throw error;
   }
-
   if (result && typeof result.then === "function") {
     return Promise.resolve(result).finally(() => {
       if (activePopupCapture === capture) activePopupCapture = previous;
     });
   }
-
   if (activePopupCapture === capture) activePopupCapture = previous;
   return result;
 }
 
+function unbindDocument(doc) {
+  const binding = boundDocuments.get(doc);
+  if (!binding) return;
+  doc.removeEventListener("click", binding.listener, true);
+  boundDocuments.delete(doc);
+  for (const entry of documentBindings) {
+    if (entry.doc === doc) {
+      documentBindings.delete(entry);
+      break;
+    }
+  }
+}
+
 function bindHostDocument(targetHost, doc) {
-  if (!targetHost || !doc || boundDocuments.has(doc)) return;
+  if (!targetHost || !doc) return;
+
+  // The host moves between documents when Foundry detaches or re-attaches it.
+  for (const entry of [...documentBindings]) {
+    if (entry.binding.host === targetHost && entry.doc !== doc) unbindDocument(entry.doc);
+  }
+  if (boundDocuments.has(doc)) return;
 
   const listener = (event) => {
     const sourceApp = [...targetHost._tabbedApps.values()].find(
@@ -61,7 +77,6 @@ function bindHostDocument(targetHost, doc) {
     const previous = activePopupCapture;
     const capture = { host: targetHost, previous, persistUntilSettled: false };
     activePopupCapture = capture;
-
     // Keep the context through synchronous handlers and their microtasks.
     // Directory actions below keep it alive for the full returned Promise.
     doc.defaultView?.setTimeout(() => {
@@ -70,16 +85,19 @@ function bindHostDocument(targetHost, doc) {
   };
 
   doc.addEventListener("click", listener, true);
-  boundDocuments.set(doc, { host: targetHost, listener });
+  const binding = { host: targetHost, listener };
+  boundDocuments.set(doc, binding);
+  documentBindings.add({ doc, binding });
 }
 
 function unbindDetachedDocument(win) {
-  const doc = win?.document;
-  if (!doc) return;
-  const binding = boundDocuments.get(doc);
-  if (!binding) return;
-  doc.removeEventListener("click", binding.listener, true);
-  boundDocuments.delete(doc);
+  let doc;
+  try {
+    doc = win?.document;
+  } catch (_error) {
+    return;
+  }
+  if (doc) unbindDocument(doc);
 }
 
 function normalizeRenderOptions(options, legacyOptions) {
@@ -88,19 +106,11 @@ function normalizeRenderOptions(options, legacyOptions) {
 }
 
 function renderPopupInHost(app, targetHost, options, nativeRender) {
-  if (
-    !(app instanceof DialogV2) ||
-    app.parent ||
-    app.rendered ||
-    popupRenderBypass.has(app) ||
-    !targetHost?.rendered
-  ) {
+  if (!(app instanceof DialogV2) || app.parent || app.rendered || popupRenderBypass.has(app) || !targetHost?.rendered) {
     return nativeRender();
   }
-
   return targetHost._enqueueTransition(async () => {
     if (app.parent || app.rendered) return nativeRender();
-
     await targetHost.ensureDetachedWindow();
     popupRenderBypass.add(app);
     try {
@@ -132,11 +142,9 @@ function installPopupCapture() {
         if (!capture || !capture.host?.rendered || !getTabbedHost() || this === capture.host) {
           return wrapped(options, legacyOptions);
         }
-
         if (!capture.persistUntilSettled && activePopupCapture === capture) {
           activePopupCapture = capture.previous;
         }
-
         const renderOptions = normalizeRenderOptions(options, legacyOptions);
         return renderPopupInHost(this, capture.host, renderOptions, () => wrapped(options, legacyOptions));
       },

@@ -23,7 +23,7 @@ function findApplicationById(appId) {
 }
 
 function installExternalApplicationDrag(app) {
-  if (!(app instanceof ApplicationV2) || app instanceof TabbedFoundryHost) return false;
+  if (!(app instanceof ApplicationV2) || app instanceof TabbedFoundryHost || !host?.rendered) return false;
   if (!app.window?.windowId || app.parent instanceof TabbedFoundryHost) return false;
   if (app.parent && app.parent !== workspaceAnchor) return false;
   if (externalDragApplications.has(app)) return true;
@@ -32,6 +32,7 @@ function installExternalApplicationDrag(app) {
   if (!header) return false;
 
   header.draggable = true;
+  header.classList.add("tabbed-foundry-external-drag-handle");
   header.addEventListener("dragstart", (event) => {
     if (app.parent instanceof TabbedFoundryHost || !app.window?.windowId) {
       event.preventDefault();
@@ -122,6 +123,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
   async _onRender(context, options) {
     await super._onRender(context, options);
+    for (const app of Object.values(ui?.windows ?? {})) installExternalApplicationDrag(app);
     this._renderWorkspace();
     this._setupLayoutObservers();
     this._scheduleLayout();

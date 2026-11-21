@@ -18,8 +18,24 @@
   background: transparent !important;
 }
 
+/*
+ * The host frame is a transparent interaction layer above the child app.
+ * Let clicks pass through its empty surface; only its own controls are active.
+ */
 .tabbed-foundry-host {
   z-index: 100000 !important;
+  pointer-events: none !important;
+}
+
+.tabbed-foundry-host > .window-header,
+.tabbed-foundry-host > .window-header *,
+.tabbed-foundry-host .tabbed-foundry-tabs,
+.tabbed-foundry-host .tabbed-foundry-tabs * {
+  pointer-events: auto !important;
+}
+
+.tabbed-foundry-host > .window-content {
+  pointer-events: none !important;
 }
 
 .tabbed-foundry-host > .window-content {

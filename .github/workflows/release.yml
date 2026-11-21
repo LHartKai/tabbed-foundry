@@ -18,6 +18,9 @@ on:
         required: true
         type: boolean
         default: false
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -28,6 +31,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-tabbed-foundry]')
     name: Validate, bump and publish
     runs-on: ubuntu-latest
 
@@ -46,8 +50,8 @@ jobs:
       - name: Calculate next version
         id: version
         env:
-          BUMP: ${{ inputs.bump }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          BUMP: ${{ inputs.bump || 'patch' }}
+          PRERELEASE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-tabbed-foundry]') || inputs.prerelease || false }}
           REPOSITORY: ${{ github.repository }}
         run: |
           git fetch --tags --force
@@ -110,7 +114,9 @@ jobs:
       - name: Validate module and smoke tests
         run: |
           node --check scripts/tabbed-foundry.js
+          node --check scripts/integrations/monks-enhanced-journal.js
           node tests/smoke.js
+          node tests/mej-integration-smoke.js
           node -e "const m = JSON.parse(require('fs').readFileSync('module.json', 'utf8')); if (m.id !== 'tabbed-foundry' || !m.relationships?.requires?.some(r => r.id === 'lib-wrapper')) process.exit(1);"
           test -f styles/tabbed-foundry.css
           test -f templates/host.hbs
@@ -129,7 +135,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          PRERELEASE: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[release-tabbed-foundry]') || inputs.prerelease || false }}
         run: |
           NOTES_ARGS=()
           if [ "$PRERELEASE" = "true" ]; then

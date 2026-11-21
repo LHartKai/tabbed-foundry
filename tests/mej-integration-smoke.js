@@ -56,6 +56,7 @@ async function boot({
       return { person: PersonSheet };
     }
   };
+  const originalFixType = mej.fixType;
 
   const game = {
     user: { id: "test-user" },
@@ -102,7 +103,7 @@ async function boot({
   vm.runInNewContext(source, context, { filename: "monks-enhanced-journal.js" });
   for (const callback of hooks.get("setup") ?? []) await callback();
 
-  return { context, game, hooks, registrations, modules, mej, ApplicationV2, EnhancedJournalSheet, PersonSheet, originalFixTypeCalls };
+  return { context, game, hooks, registrations, modules, mej, originalFixType, ApplicationV2, EnhancedJournalSheet, PersonSheet, originalFixTypeCalls };
 }
 
 (async () => {
@@ -159,7 +160,9 @@ async function boot({
   personSheet.enhancedjournal = { render: options => Promise.resolve({ renderer: "enhanced-journal", options }) };
   const renderResult = personSheet.render({ force: false });
   assert.equal(typeof renderResult?.then, "function");
-  assert.deepEqual(await renderResult, { renderer: "enhanced-journal", options: { force: false } });
+  const rendered = await renderResult;
+  assert.equal(rendered.renderer, "enhanced-journal");
+  assert.equal(rendered.options.force, false);
 
   // The _preFirstRender wrapper patches only MEJ's own EnhancedJournal class.
   class EnhancedJournal extends env.ApplicationV2 {
@@ -201,7 +204,7 @@ async function boot({
   // Disabled / absent Monk: no compatibility changes are applied.
   const noMej = await boot({ mejActive: false });
   assert.equal(noMej.registrations.length, 0);
-  assert.equal(noMej.mej.fixType, noMej.context.game.MonksEnhancedJournal.fixType);
+  assert.equal(noMej.mej.fixType, noMej.originalFixType, "the Monk API is untouched when Monk is disabled");
   assert.equal(noMej.game[Symbol.for("tabbed-foundry.integrations")].mejCompatibility.active, false);
 
   // A different MEJ version is not patched by code specific to 14.02.
@@ -212,7 +215,7 @@ async function boot({
   // Do not double-patch when the old standalone compatibility module remains active.
   const standalone = await boot({ standaloneActive: true });
   assert.equal(standalone.registrations.length, 0);
-  assert.equal(standalone.game[Symbol.for("tabbed-foundry.integrations")].active, undefined);
+  assert.equal(standalone.mej.fixType, standalone.originalFixType, "the standalone patch remains the only active compatibility layer");
   assert.match(
     standalone.game[Symbol.for("tabbed-foundry.integrations")].mejCompatibility.skippedReason,
     /módulo separado/

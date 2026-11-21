@@ -18,6 +18,9 @@ on:
         required: true
         type: boolean
         default: false
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -28,6 +31,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-tabbed-foundry]')
     name: Validate, bump and publish
     runs-on: ubuntu-latest
 
@@ -46,8 +50,8 @@ jobs:
       - name: Calculate next version
         id: version
         env:
-          BUMP: ${{ inputs.bump }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          BUMP: ${{ inputs.bump || 'patch' }}
+          PRERELEASE: ${{ inputs.prerelease || 'false' }}
           REPOSITORY: ${{ github.repository }}
         run: |
           git fetch --tags --force

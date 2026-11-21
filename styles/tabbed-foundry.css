@@ -150,3 +150,95 @@
   min-height: 0;
   overflow: auto;
 }
+
+/* Context menu opened by right-clicking an application tab. */
+.tabbed-foundry-context-menu {
+  position: fixed;
+  z-index: 200000;
+  display: flex;
+  min-width: 15rem;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--color-border-light-primary, #777);
+  border-radius: 5px;
+  background: var(--color-cool-5, #29252f);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.55);
+  color: var(--color-text-light-primary, #f0edf4);
+  pointer-events: auto !important;
+}
+
+.tabbed-foundry-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto !important;
+}
+
+.tabbed-foundry-context-menu-item:hover,
+.tabbed-foundry-context-menu-item:focus-visible {
+  outline: none;
+  background: var(--color-hover, rgba(255, 255, 255, 0.12));
+}
+
+.tabbed-foundry-context-menu-item > i {
+  flex: 0 0 1.1rem;
+  width: 1.1rem;
+  text-align: center;
+  opacity: 0.9;
+}
+
+.tabbed-foundry-context-menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tabbed-foundry-context-menu-text strong {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.tabbed-foundry-context-menu-text small {
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+
+/* A no-frame root in the main Foundry document acts as the reattachment
+   parent; its children render as normal main-workspace applications. */
+.tabbed-foundry-workspace-anchor {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+.tabbed-foundry-workspace-anchor > .window-content {
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+  pointer-events: none !important;
+}

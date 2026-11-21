@@ -55,6 +55,31 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._dividerCleanup = null;
     this._transitionQueue = Promise.resolve();
     this._detachingHostPromise = null;
+    this._returnDropHeader = null;
+    this._boundReturnDragOver = (event) => {
+      if (!this._dragSession?.app || !this._tabbedApps.has(this._dragSession.app.id)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      this._returnDropHeader?.classList.add("tabbed-foundry-return-drop-active");
+    };
+    this._boundReturnDragLeave = (event) => {
+      if (!this._returnDropHeader?.contains(event.relatedTarget)) {
+        this._returnDropHeader?.classList.remove("tabbed-foundry-return-drop-active");
+      }
+    };
+    this._boundReturnDrop = (event) => {
+      const appId = this._draggedAppId(event);
+      const app = appId ? this._tabbedApps.get(appId) : null;
+      if (!app) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this._returnDropHeader?.classList.remove("tabbed-foundry-return-drop-active");
+      this._finishDragSession(true);
+      this._returnApplicationToWorkspace(app).catch(error => {
+        console.error("[" + MODULE_ID + "] Não foi possível devolver a aplicação ao workspace principal.", error);
+        ui.notifications?.warn("Não foi possível devolver a aplicação ao Foundry.");
+      });
+    };
 
     this.addEventListener("close", () => {
       this._removeLayoutObservers();
@@ -272,6 +297,14 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
     this.window?.header?.style.setProperty("pointer-events", "auto", "important");
     this.window?.resize?.style.setProperty("pointer-events", "auto", "important");
+    const returnDropHeader = this.window?.header ?? element.querySelector(":scope > .window-header");
+    if (returnDropHeader !== this._returnDropHeader) {
+      this._removeReturnDropTarget();
+      this._returnDropHeader = returnDropHeader ?? null;
+      this._returnDropHeader?.addEventListener("dragover", this._boundReturnDragOver);
+      this._returnDropHeader?.addEventListener("dragleave", this._boundReturnDragLeave);
+      this._returnDropHeader?.addEventListener("drop", this._boundReturnDrop);
+    }
     content.style.setProperty("pointer-events", "none", "important");
 
     if (this._observedView !== view) {
@@ -302,7 +335,18 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._observedChildren.set(app.id, element);
   }
 
+  _removeReturnDropTarget() {
+    const header = this._returnDropHeader;
+    if (!header) return;
+    header.removeEventListener("dragover", this._boundReturnDragOver);
+    header.removeEventListener("dragleave", this._boundReturnDragLeave);
+    header.removeEventListener("drop", this._boundReturnDrop);
+    header.classList.remove("tabbed-foundry-return-drop-active");
+    this._returnDropHeader = null;
+  }
+
   _removeLayoutObservers() {
+    this._removeReturnDropTarget();
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._childResizeObserver?.disconnect();

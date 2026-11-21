@@ -15,11 +15,25 @@ let attachInterceptorInstalled = false;
 
 const externalDragApplications = new WeakSet();
 
+function getOpenApplications() {
+  const apps = new Set(Object.values(ui?.windows ?? {}).filter(Boolean));
+  try {
+    for (const app of ApplicationV2.instances()) apps.add(app);
+  } catch (error) {
+    console.debug("[" + MODULE_ID + "] Não foi possível enumerar todas as instâncias ApplicationV2.", error);
+  }
+  return [...apps];
+}
+
 function findApplicationById(appId) {
   const windows = ui?.windows;
   const direct = windows?.get?.(appId) ?? windows?.[appId];
   if (direct) return direct;
-  return Object.values(windows ?? {}).find(app => app?.id === appId) ?? null;
+  return getOpenApplications().find(app => app?.id === appId) ?? null;
+}
+
+function installExternalDragSources() {
+  for (const app of getOpenApplications()) installExternalApplicationDrag(app);
 }
 
 function installExternalApplicationDrag(app) {
@@ -126,7 +140,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
   async _onRender(context, options) {
     await super._onRender(context, options);
-    for (const app of Object.values(ui?.windows ?? {})) installExternalApplicationDrag(app);
+    installExternalDragSources();
     this._renderWorkspace();
     this._setupLayoutObservers();
     this._scheduleLayout();
@@ -1392,10 +1406,7 @@ Hooks.once("init", () => {
   installDetachInterceptor();
   installAttachInterceptor();
   Hooks.on("renderApplicationV2", (app) => installExternalApplicationDrag(app));
-  Hooks.on("openDetachedWindow", () => {
-    const windows = Object.values(ui?.windows ?? {});
-    for (const app of windows) installExternalApplicationDrag(app);
-  });
+  Hooks.on("openDetachedWindow", () => installExternalDragSources());
 });
 
 Hooks.once("ready", async () => {

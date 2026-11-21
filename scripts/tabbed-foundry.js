@@ -619,7 +619,11 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this.element?.classList.remove("tabbed-foundry-dragging");
     this._dragSession = null;
     if (!session || session.cancelled || session.accepted) return;
-    this._detachApplicationToNativeWindow(session.app);
+    this._detachApplicationToNativeWindow(session.app).catch(error => {
+      console.error("[" + MODULE_ID + "] Não foi possível destacar a aplicação após arrastar a aba.", error);
+      if (this._tabbedApps.has(session.app.id)) this.activate(session.app.id, this._findPaneForApp(session.app.id)?.id);
+      ui.notifications?.warn("Não foi possível abrir a aplicação em uma janela própria; ela permaneceu no Tabbed Foundry.");
+    });
   }
 
   _tabDropZone(event, tab) {
@@ -1172,6 +1176,15 @@ function installDetachInterceptor() {
 }
 
 Hooks.once("init", () => {
+  Hooks.on("libWrapper.ConflictDetected", (packageId, conflictingPackageId, wrapperName) => {
+    if (packageId !== MODULE_ID && conflictingPackageId !== MODULE_ID) return;
+    console.warn(
+      "[" + MODULE_ID + "] Conflito de libWrapper detectado com '" +
+      (packageId === MODULE_ID ? conflictingPackageId : packageId) +
+      "' no método " + wrapperName + ". O comportamento nativo foi mantido pela cadeia MIXED sempre que possível."
+    );
+  });
+
   game.settings.register(MODULE_ID, SETTING_AUTO_GROUP, {
     name: "Agrupar aplicações destacadas automaticamente",
     hint: "Quando ativado, aplicações ApplicationV2 destacadas do workspace principal são organizadas em abas na janela do Tabbed Foundry. Desative para manter o destacamento nativo do Foundry.",

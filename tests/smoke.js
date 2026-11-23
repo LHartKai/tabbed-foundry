@@ -173,6 +173,106 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     "restoration does not substitute a different sheet class"
   );
 
+  class PainelInvestigacao extends env.ApplicationV2 {}
+  class PainelAcaoApp extends env.ApplicationV2 {}
+  let investigationPanel;
+  let actionPanel;
+  env.context.game.op2 = {
+    painelInvestigacao() {
+      investigationPanel = new PainelInvestigacao();
+      return investigationPanel;
+    },
+    painelAcao() {
+      actionPanel = new PainelAcaoApp();
+      return actionPanel;
+    }
+  };
+  assert.equal(
+    await env.context.reopenKnownApplication({ className: "PainelInvestigacao", title: "Painel de investigação" }),
+    investigationPanel,
+    "the Ordem Paranormal investigation panel is reopened through its public system API"
+  );
+  assert.equal(investigationPanel.rendered, true);
+  assert.equal(
+    await env.context.reopenKnownApplication({ className: "PainelAcaoApp", title: "Cena de ação" }),
+    actionPanel,
+    "the Ordem Paranormal action panel is reopened through its public system API"
+  );
+  assert.equal(actionPanel.rendered, true);
+
+  class EnhancedJournal extends env.ApplicationV2 {
+    constructor(document) {
+      super();
+      this.document = document;
+    }
+  }
+  const journalDocument = { uuid: "JournalEntry.restore-test" };
+  const mej = {
+    journal: null,
+    async openJournalEntry(document) {
+      this.journal = new EnhancedJournal(document);
+      this.journal.rendered = true;
+      return true;
+    }
+  };
+  env.context.game.MonksEnhancedJournal = mej;
+  env.context.fromUuid = async uuid => uuid === journalDocument.uuid ? journalDocument : null;
+  assert.equal(
+    await env.context.reopenKnownApplication({
+      className: "EnhancedJournal",
+      documentUuid: journalDocument.uuid,
+      title: "Monk's Enhanced Journal"
+    }),
+    mej.journal,
+    "Monk's Enhanced Journal is reopened through openJournalEntry instead of document.sheet"
+  );
+  assert.equal(mej.journal.document, journalDocument);
+
+  class ActorDirectory extends env.ApplicationV2 {
+    constructor() {
+      super();
+      this.id = "actors";
+      this.tabName = "actors";
+    }
+    async renderPopout() {
+      const popout = new ActorDirectory();
+      popout.id = "actors-popout";
+      popout.rendered = true;
+      return popout;
+    }
+  }
+  class PlaylistDirectory extends env.ApplicationV2 {
+    constructor() {
+      super();
+      this.id = "playlists";
+      this.tabName = "playlists";
+    }
+    async renderPopout() {
+      const popout = new PlaylistDirectory();
+      popout.id = "playlists-popout";
+      popout.rendered = true;
+      return popout;
+    }
+  }
+  const actorTab = new ActorDirectory();
+  const playlistTab = new PlaylistDirectory();
+  env.context.ui.sidebar = new env.ApplicationV2();
+  env.context.ui.sidebar.children = new Map([
+    ["actors", actorTab],
+    ["playlists", playlistTab]
+  ]);
+  env.context.ui.sidebar.popouts = {};
+  assert.equal(
+    (await env.context.reopenKnownApplication({ className: "ActorDirectory", title: "Actor Directory" })).id,
+    "actors-popout",
+    "the Actor Directory popout is recreated through the sidebar tab"
+  );
+  assert.equal(
+    (await env.context.reopenKnownApplication({ className: "PlaylistDirectory", title: "Playlist Directory" })).id,
+    "playlists-popout",
+    "the Playlist Directory popout is recreated through the sidebar tab"
+  );
+
   const legacySheet = new env.ApplicationV2();
   legacySheet.document = { uuid: "Actor.legacy-test" };
   const legacyDocument = { name: "Legacy actor", sheet: legacySheet };

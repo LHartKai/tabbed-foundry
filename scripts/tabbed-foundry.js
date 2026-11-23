@@ -19,6 +19,15 @@ const externalDragApplications = new WeakSet();
 
 function getOpenApplications() {
   const apps = new Set(Object.values(ui?.windows ?? {}).filter(Boolean));
+  try {
+    const instances = ApplicationV2.instances?.();
+    if (instances && typeof instances[Symbol.iterator] === "function") {
+      for (const app of instances) apps.add(app);
+    }
+  } catch (error) {
+    console.debug("[" + MODULE_ID + "] Não foi possível enumerar todas as instâncias ApplicationV2.", error);
+  }
+
   const registry = foundry.applications.instances;
   if (registry instanceof Map) {
     for (const app of registry.values()) apps.add(app);
@@ -28,6 +37,27 @@ function getOpenApplications() {
   }
   if (ui?.sidebar instanceof ApplicationV2) apps.add(ui.sidebar);
   return [...apps];
+}
+
+function getApplicationDocumentUuid(app) {
+  const uuid = app?.document?.uuid ?? app?.object?.uuid ?? null;
+  return typeof uuid === "string" && uuid.length ? uuid : null;
+}
+
+async function reopenDocumentSheet(record) {
+  if (!record?.documentUuid || typeof fromUuid !== "function") return null;
+
+  try {
+    const document = await fromUuid(record.documentUuid);
+    const app = document?.sheet;
+    if (!(app instanceof ApplicationV2)) return null;
+    if (record.className && app.constructor?.name !== record.className) return null;
+    if (getApplicationDocumentUuid(app) !== record.documentUuid) return null;
+    return app;
+  } catch (error) {
+    console.warn("[" + MODULE_ID + "] Não foi possível reabrir o documento " + record.documentUuid + ".", error);
+    return null;
+  }
 }
 
 function findApplicationById(appId) {
@@ -307,7 +337,8 @@ class TabbedFoundryHost extends HandlebarsApplication {
         id: String(app.id),
         className: app.constructor?.name ?? "",
         configId: app.options?.id == null ? null : String(app.options.id),
-        title: app.title ?? ""
+        title: app.title ?? "",
+        documentUuid: getApplicationDocumentUuid(app)
       });
     }
     for (const record of this._pendingRestore?.apps ?? []) {
@@ -368,12 +399,14 @@ class TabbedFoundryHost extends HandlebarsApplication {
         id: String(record.id),
         className: String(record.className ?? ""),
         configId: record.configId == null ? null : String(record.configId),
-        title: String(record.title ?? "")
+        title: String(record.title ?? ""),
+        documentUuid: record.documentUuid == null ? null : String(record.documentUuid)
       }))
     };
     this._renderWorkspace();
     for (const record of [...(this._pendingRestore?.apps ?? [])]) {
-      const app = this._findRestorableApplication(record);
+      let app = this._findRestorableApplication(record);
+      if (!app) app = await reopenDocumentSheet(record);
       if (app) await this.restorePendingApplication(app);
     }
     this._restoringLayout = false;
@@ -399,7 +432,11 @@ class TabbedFoundryHost extends HandlebarsApplication {
   async restorePendingApplication(app) {
     const pending = this._pendingRestore;
     if (!pending || !(app instanceof ApplicationV2) || app === this) return false;
-    let record = pending.apps.find(item => String(app.id) === item.id);
+    const documentUuid = getApplicationDocumentUuid(app);
+    let record = documentUuid
+      ? pending.apps.find(item => item.documentUuid === documentUuid)
+      : null;
+    if (!record) record = pending.apps.find(item => String(app.id) === item.id);
     if (!record) {
       const matches = pending.apps.filter(item =>
         app.constructor?.name === item.className &&

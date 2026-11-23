@@ -31,7 +31,11 @@ function getOpenApplications() {
   if (registry instanceof Map) {
     for (const app of registry.values()) apps.add(app);
   }
-  for (const app of ui?.sidebar?.children?.values?.() ?? []) {
+  // Foundry exposes its primary sidebar tabs directly on ui (ui.actors,
+  // ui.playlists, etc.). Sidebar.children only contains applications rendered
+  // as managed children and is not the registry of the built-in tabs.
+  for (const key of ["actors", "playlists"]) {
+    const app = ui?.[key];
     if (app instanceof ApplicationV2) apps.add(app);
   }
   for (const app of Object.values(ui?.sidebar?.popouts ?? {})) {
@@ -94,16 +98,22 @@ async function reopenKnownApplication(record) {
   // public renderPopout() method, not by constructing another directory.
   if (["ActorDirectory", "PlaylistDirectory"].includes(record.className)) {
     const sidebar = ui?.sidebar;
-    const children = [...(sidebar?.children?.values?.() ?? [])];
-    const tab = children.find(app =>
-      app?.constructor?.name === record.className &&
-      typeof app.renderPopout === "function"
-    );
-    if (!tab) return null;
+    const tabName = record.className === "ActorDirectory" ? "actors" : "playlists";
+    const tab = ui?.[tabName];
+    if (!(tab instanceof ApplicationV2) || typeof tab.renderPopout !== "function") {
+      console.warn(
+        "[" + MODULE_ID + "] A aba nativa ui." + tabName +
+        " não está disponível para restaurar " + record.title + "."
+      );
+      return null;
+    }
     try {
-      const existingPopout = tab.popout ?? sidebar.popouts?.[tab.tabName];
+      // renderPopout creates the detached directory from its native sidebar
+      // tab. Reuse it if Foundry already created the popout during startup.
+      const existingPopout = tab.popout ?? sidebar?.popouts?.[tabName];
       const app = existingPopout ?? await tab.renderPopout();
-      return app instanceof ApplicationV2 ? app : null;
+      if (!(app instanceof ApplicationV2)) return null;
+      return app;
     } catch (error) {
       console.warn("[" + MODULE_ID + "] Não foi possível reabrir o diretório " + record.title + ".", error);
       return null;

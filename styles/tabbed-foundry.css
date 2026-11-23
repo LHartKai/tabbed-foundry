@@ -56,7 +56,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  pointer-events: none;
+  pointer-events: auto !important;
 }
 
 .tabbed-foundry-workspace > .tabbed-foundry-pane,

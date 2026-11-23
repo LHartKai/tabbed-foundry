@@ -838,6 +838,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       node.ratio = 0.5;
       this._applySplitRatio(node, split, first, second);
       this._scheduleLayout();
+      this.persistLayout();
     });
     divider.addEventListener("keydown", (event) => {
       const horizontal = node.direction === "horizontal";
@@ -848,6 +849,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       node.ratio = Math.max(0.18, Math.min(0.82, node.ratio + (event.key === positive ? 0.03 : -0.03)));
       this._applySplitRatio(node, split, first, second);
       this._scheduleLayout();
+      this.persistLayout();
     });
 
     const second = doc.createElement("div");
@@ -905,8 +907,10 @@ class TabbedFoundryHost extends HandlebarsApplication {
   }
 
   _stopDividerResize() {
+    const wasResizing = Boolean(this._dividerCleanup);
     this._dividerCleanup?.();
     this._dividerCleanup = null;
+    if (wasResizing) this.persistLayout();
   }
 
   _startTabDrag(event, app, doc) {

@@ -31,13 +31,8 @@ function getOpenApplications() {
   if (registry instanceof Map) {
     for (const app of registry.values()) apps.add(app);
   }
-  // Foundry exposes its primary sidebar tabs directly on ui (ui.actors,
-  // ui.playlists, etc.). Sidebar.children only contains applications rendered
-  // as managed children and is not the registry of the built-in tabs.
-  for (const key of ["actors", "playlists"]) {
-    const app = ui?.[key];
-    if (app instanceof ApplicationV2) apps.add(app);
-  }
+  // Include the core directories even when they are not registered as
+  // children of Sidebar itself.
   for (const app of Object.values(ui?.sidebar?.popouts ?? {})) {
     if (app instanceof ApplicationV2) apps.add(app);
   }
@@ -99,17 +94,39 @@ async function reopenKnownApplication(record) {
   if (["ActorDirectory", "PlaylistDirectory"].includes(record.className)) {
     const sidebar = ui?.sidebar;
     const tabName = record.className === "ActorDirectory" ? "actors" : "playlists";
-    const tab = ui?.[tabName];
-    if (!(tab instanceof ApplicationV2) || typeof tab.renderPopout !== "function") {
+    const directories = getOpenApplications();
+    let tab = directories.find(app =>
+      app?.constructor?.name === record.className &&
+      app.isPopout !== true &&
+      typeof app.renderPopout === "function"
+    );
+
+    // CONFIG.ui contains the native Application classes in Foundry v14.
+    // If startup did not create the directory instance yet, create its native
+    // tab controller as a fallback and ask it for the standard popout.
+    if (!tab) {
+      const DirectoryClass = CONFIG.ui?.[tabName];
+      if (typeof DirectoryClass === "function") {
+        try {
+          tab = new DirectoryClass();
+        } catch (error) {
+          console.warn("[" + MODULE_ID + "] Não foi possível criar a origem nativa do diretório " + record.title + ".", error);
+          return null;
+        }
+      }
+    }
+
+    if (!tab || typeof tab.renderPopout !== "function") {
       console.warn(
-        "[" + MODULE_ID + "] A aba nativa ui." + tabName +
-        " não está disponível para restaurar " + record.title + "."
+        "[" + MODULE_ID + "] A instância/classe nativa do diretório " +
+        record.title + " não está disponível para restauração."
       );
       return null;
     }
+
     try {
-      // renderPopout creates the detached directory from its native sidebar
-      // tab. Reuse it if Foundry already created the popout during startup.
+      // Reuse an existing popout, otherwise let the native sidebar-tab class
+      // create it. The returned instance is then adopted into its saved pane.
       const existingPopout = tab.popout ?? sidebar?.popouts?.[tabName];
       const app = existingPopout ?? await tab.renderPopout();
       if (!(app instanceof ApplicationV2)) return null;

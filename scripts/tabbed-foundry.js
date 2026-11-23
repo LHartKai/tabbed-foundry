@@ -45,17 +45,39 @@ function getApplicationDocumentUuid(app) {
 }
 
 async function reopenDocumentSheet(record) {
-  if (!record?.documentUuid || typeof fromUuid !== "function") return null;
+  if (!record || (!record.documentUuid && (!record.className || !record.title))) return null;
 
   try {
-    const document = await fromUuid(record.documentUuid);
+    let document = null;
+    if (record.documentUuid && typeof fromUuid === "function") {
+      document = await fromUuid(record.documentUuid);
+    } else if (!record.documentUuid) {
+      // Migrate layouts saved before document UUIDs were recorded. Only reopen
+      // a world document when its name and sheet class identify one unique match.
+      const matches = [];
+      for (const collection of game.collections?.values?.() ?? []) {
+        for (const candidate of collection ?? []) {
+          if (candidate?.name !== record.title) continue;
+          const sheet = candidate.sheet;
+          if (sheet instanceof ApplicationV2 && sheet.constructor?.name === record.className) {
+            matches.push(candidate);
+          }
+        }
+      }
+      if (matches.length === 1) document = matches[0];
+    }
+
     const app = document?.sheet;
     if (!(app instanceof ApplicationV2)) return null;
     if (record.className && app.constructor?.name !== record.className) return null;
-    if (getApplicationDocumentUuid(app) !== record.documentUuid) return null;
+    if (record.documentUuid && getApplicationDocumentUuid(app) !== record.documentUuid) return null;
     return app;
   } catch (error) {
-    console.warn("[" + MODULE_ID + "] Não foi possível reabrir o documento " + record.documentUuid + ".", error);
+    console.warn(
+      "[" + MODULE_ID + "] Não foi possível reabrir o documento " +
+      (record.documentUuid ?? record.title) + ".",
+      error
+    );
     return null;
   }
 }

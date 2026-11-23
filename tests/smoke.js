@@ -173,6 +173,32 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     "restoration does not substitute a different sheet class"
   );
 
+  const legacySheet = new env.ApplicationV2();
+  legacySheet.document = { uuid: "Actor.legacy-test" };
+  const legacyDocument = { name: "Legacy actor", sheet: legacySheet };
+  env.context.game.collections = new Map([["actors", [legacyDocument]]]);
+  assert.equal(
+    await env.context.reopenDocumentSheet({
+      documentUuid: null,
+      className: "ApplicationV2",
+      title: "Legacy actor"
+    }),
+    legacySheet,
+    "a legacy saved tab can migrate from a unique world-document name and sheet class"
+  );
+
+  const duplicateLegacyDocument = { name: "Legacy actor", sheet: new env.ApplicationV2() };
+  env.context.game.collections = new Map([["actors", [legacyDocument, duplicateLegacyDocument]]]);
+  assert.equal(
+    await env.context.reopenDocumentSheet({
+      documentUuid: null,
+      className: "ApplicationV2",
+      title: "Legacy actor"
+    }),
+    null,
+    "legacy migration does not guess when multiple documents share the same title and sheet class"
+  );
+
   assert.equal(env.registrations.length, 2, "detach and attach lifecycle wrappers are registered");
   assert.equal(env.registrations[0].packageId, "tabbed-foundry");
   assert.equal(

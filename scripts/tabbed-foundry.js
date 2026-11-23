@@ -482,9 +482,13 @@ class TabbedFoundryHost extends HandlebarsApplication {
 
   _findRestorableApplication(record) {
     const apps = getOpenApplications().filter(app => app instanceof ApplicationV2 && app !== this);
-    const exact = apps.find(app => String(app.id) === record.id);
+    const isDirectoryPopout = ["ActorDirectory", "PlaylistDirectory"].includes(record.className);
+    const candidates = isDirectoryPopout
+      ? apps.filter(app => app.isPopout === true)
+      : apps;
+    const exact = candidates.find(app => String(app.id) === record.id);
     if (exact) return exact;
-    const matches = apps.filter(app =>
+    const matches = candidates.filter(app =>
       app.constructor?.name === record.className &&
       (record.configId == null || String(app.options?.id ?? "") === record.configId)
     );

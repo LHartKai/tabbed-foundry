@@ -1,5 +1,7 @@
 const MODULE_ID = "tabbed-foundry";
 const SETTING_AUTO_GROUP = "autoGrouping";
+const SETTING_LAYOUT_STATE = "layoutState";
+const MIN_PANE_HEIGHT = 260;
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 const HandlebarsApplication = HandlebarsApplicationMixin(ApplicationV2);
@@ -17,11 +19,14 @@ const externalDragApplications = new WeakSet();
 
 function getOpenApplications() {
   const apps = new Set(Object.values(ui?.windows ?? {}).filter(Boolean));
-  try {
-    for (const app of ApplicationV2.instances()) apps.add(app);
-  } catch (error) {
-    console.debug("[" + MODULE_ID + "] Não foi possível enumerar todas as instâncias ApplicationV2.", error);
+  const registry = foundry.applications.instances;
+  if (registry instanceof Map) {
+    for (const app of registry.values()) apps.add(app);
   }
+  for (const app of Object.values(ui?.sidebar?.tabs ?? {})) {
+    if (app instanceof ApplicationV2) apps.add(app);
+  }
+  if (ui?.sidebar instanceof ApplicationV2) apps.add(ui.sidebar);
   return [...apps];
 }
 
@@ -115,7 +120,15 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._dividerCleanup = null;
     this._transitionQueue = Promise.resolve();
     this._detachingHostPromise = null;
+    this._persistQueue = Promise.resolve();
+    this._pendingRestore = null;
+    this._restoreStarted = false;
+    this._restoringLayout = false;
+    this._workspaceScrollElement = null;
     this.addEventListener("close", () => {
+      this.persistLayout();
+      this._workspaceScrollElement?.removeEventListener("scroll", this._boundLayout);
+      this._workspaceScrollElement = null;
       this._removeLayoutObservers();
       this._closeTabContextMenu();
       this._finishDragSession(false);
@@ -178,7 +191,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     return this._enqueueTransition(() => this._adoptApplication(app, options));
   }
 
-  async _adoptApplication(app, options = {}) {
+  async _adoptApplication(app, options = {}, { preserveLayout = false } = {}) {
     if (!(app instanceof ApplicationV2) || app === this) {
       throw new TypeError("Tabbed Foundry só pode agrupar instâncias ApplicationV2.");
     }
@@ -195,7 +208,14 @@ class TabbedFoundryHost extends HandlebarsApplication {
     }
 
     this._tabbedApps.set(app.id, app);
-    this._insertIntoActivePane(app.id);
+    if (!preserveLayout) this._insertIntoActivePane(app.id);
+    else if (!this._findPaneForApp(app.id)) {
+      const pane = this._findPane(this._layoutTree, this._activePaneId) || this._firstPane();
+      if (pane) {
+        pane.tabs.push(app.id);
+        pane.activeId = app.id;
+      }
+    }
 
     const onRender = () => {
       this._decorateChild(app);
@@ -224,11 +244,187 @@ class TabbedFoundryHost extends HandlebarsApplication {
       this._observeChild(app);
       this._renderWorkspace();
       this._scheduleLayout();
+      if (!this._restoringLayout) this.persistLayout();
       this.bringToFront();
       return app;
     } catch (error) {
       this.release(app.id);
       throw error;
+    }
+  }
+
+  _cloneLayoutNode(node) {
+    if (!node) return null;
+    if (node.type === "pane") {
+      return {
+        type: "pane",
+        id: String(node.id),
+        tabs: Array.isArray(node.tabs) ? node.tabs.map(String) : [],
+        activeId: node.activeId == null ? null : String(node.activeId)
+      };
+    }
+    if (node.type !== "split" || !["horizontal", "vertical"].includes(node.direction)) return null;
+    const first = this._cloneLayoutNode(node.first);
+    const second = this._cloneLayoutNode(node.second);
+    if (!first || !second) return null;
+    return {
+      type: "split",
+      id: String(node.id),
+      direction: node.direction,
+      ratio: Math.max(0.18, Math.min(0.82, Number(node.ratio) || 0.5)),
+      first,
+      second
+    };
+  }
+
+  _collectLayoutAppIds(node = this._layoutTree, ids = []) {
+    if (!node) return ids;
+    if (node.type === "pane") ids.push(...node.tabs);
+    else {
+      this._collectLayoutAppIds(node.first, ids);
+      this._collectLayoutAppIds(node.second, ids);
+    }
+    return ids;
+  }
+
+  _replaceLayoutAppId(oldId, newId, node = this._layoutTree) {
+    if (!node || oldId === newId) return;
+    if (node.type === "pane") {
+      node.tabs = node.tabs.map(id => id === oldId ? newId : id);
+      if (node.activeId === oldId) node.activeId = newId;
+      return;
+    }
+    this._replaceLayoutAppId(oldId, newId, node.first);
+    this._replaceLayoutAppId(oldId, newId, node.second);
+  }
+
+  _serializeLayout() {
+    const tree = this._cloneLayoutNode(this._layoutTree);
+    if (!tree) return null;
+    const records = new Map();
+    for (const app of this._tabbedApps.values()) {
+      records.set(String(app.id), {
+        id: String(app.id),
+        className: app.constructor?.name ?? "",
+        configId: app.options?.id == null ? null : String(app.options.id),
+        title: app.title ?? ""
+      });
+    }
+    for (const record of this._pendingRestore?.apps ?? []) {
+      if (!records.has(record.id)) records.set(record.id, record);
+    }
+    return {
+      version: 1,
+      tree,
+      activePaneId: this._activePaneId,
+      apps: [...records.values()]
+    };
+  }
+
+  persistLayout() {
+    if (this._restoringLayout) return this._persistQueue;
+    const snapshot = this._serializeLayout();
+    if (!snapshot) return this._persistQueue;
+    this._persistQueue = this._persistQueue
+      .then(() => game.settings.set(MODULE_ID, SETTING_LAYOUT_STATE, snapshot))
+      .catch(error => {
+        console.error("[" + MODULE_ID + "] Não foi possível salvar a organização das guias.", error);
+      });
+    return this._persistQueue;
+  }
+
+  _findRestorableApplication(record) {
+    const apps = getOpenApplications().filter(app => app instanceof ApplicationV2 && app !== this);
+    const exact = apps.find(app => String(app.id) === record.id);
+    if (exact) return exact;
+    const matches = apps.filter(app =>
+      app.constructor?.name === record.className &&
+      (record.configId == null || String(app.options?.id ?? "") === record.configId)
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  async restorePersistedLayout() {
+    if (this._restoreStarted) return;
+    this._restoreStarted = true;
+    let snapshot;
+    try {
+      snapshot = game.settings.get(MODULE_ID, SETTING_LAYOUT_STATE);
+    } catch (error) {
+      console.warn("[" + MODULE_ID + "] Não foi possível ler a organização salva.", error);
+      return;
+    }
+    if (!snapshot || snapshot.version !== 1 || !snapshot.tree || !Array.isArray(snapshot.apps)) return;
+
+    const tree = this._cloneLayoutNode(snapshot.tree);
+    if (!tree) return;
+    this._restoringLayout = true;
+    this._layoutTree = tree;
+    this._activePaneId = snapshot.activePaneId || this._firstPane()?.id || tree.id;
+    this._paneSequence = Math.max(this._paneSequence, ...this._collectLayoutIds(tree, "tabbed-pane-"));
+    this._splitSequence = Math.max(this._splitSequence, ...this._collectLayoutIds(tree, "tabbed-split-"));
+    this._pendingRestore = {
+      apps: snapshot.apps.filter(record => record && record.id).map(record => ({
+        id: String(record.id),
+        className: String(record.className ?? ""),
+        configId: record.configId == null ? null : String(record.configId),
+        title: String(record.title ?? "")
+      }))
+    };
+    this._renderWorkspace();
+    for (const record of [...this._pendingRestore.apps]) {
+      const app = this._findRestorableApplication(record);
+      if (app) await this.restorePendingApplication(app);
+    }
+    this._restoringLayout = false;
+    if (this._pendingRestore.apps.length === 0) {
+      this._pendingRestore = null;
+      await this.persistLayout();
+    }
+  }
+
+  _collectLayoutIds(node, prefix, ids = []) {
+    if (!node) return ids;
+    if (String(node.id).startsWith(prefix)) {
+      const number = Number(String(node.id).slice(prefix.length));
+      if (Number.isFinite(number)) ids.push(number);
+    }
+    if (node.type === "split") {
+      this._collectLayoutIds(node.first, prefix, ids);
+      this._collectLayoutIds(node.second, prefix, ids);
+    }
+    return ids;
+  }
+
+  async restorePendingApplication(app) {
+    const pending = this._pendingRestore;
+    if (!pending || !(app instanceof ApplicationV2) || app === this) return false;
+    const record = pending.apps.find(item =>
+      String(app.id) === item.id ||
+      (app.constructor?.name === item.className &&
+        (item.configId == null || String(app.options?.id ?? "") === item.configId))
+    );
+    if (!record || this._tabbedApps.has(app.id)) return false;
+    if (app.parent && app.parent !== workspaceAnchor) return false;
+
+    const oldId = record.id;
+    if (oldId !== String(app.id)) {
+      this._replaceLayoutAppId(oldId, String(app.id));
+      record.id = String(app.id);
+    }
+    try {
+      await this._adoptApplication(app, {}, { preserveLayout: true });
+      pending.apps = pending.apps.filter(item => item !== record);
+      this._renderWorkspace();
+      if (pending.apps.length === 0) {
+        this._pendingRestore = null;
+        this._restoringLayout = false;
+        await this.persistLayout();
+      }
+      return true;
+    } catch (error) {
+      console.warn("[" + MODULE_ID + "] Não foi possível restaurar a guia " + record.title + ".", error);
+      return false;
     }
   }
 
@@ -425,12 +621,32 @@ class TabbedFoundryHost extends HandlebarsApplication {
     });
   }
 
+  _minimumLayoutHeight(node) {
+    if (!node || node.type === "pane") return MIN_PANE_HEIGHT;
+    const first = this._minimumLayoutHeight(node.first);
+    const second = this._minimumLayoutHeight(node.second);
+    return node.direction === "vertical"
+      ? first + second + 7
+      : Math.max(first, second);
+  }
+
   _renderWorkspace() {
     const workspace = this.element?.querySelector("[data-tabbed-workspace]");
     if (!workspace) return;
+    if (this._workspaceScrollElement !== workspace) {
+      this._workspaceScrollElement?.removeEventListener("scroll", this._boundLayout);
+      this._workspaceScrollElement = workspace;
+      workspace.addEventListener("scroll", this._boundLayout, { passive: true });
+    }
     workspace.replaceChildren();
     this._paneContentElements.clear();
     this._renderLayoutNode(this._layoutTree, workspace);
+    const root = workspace.firstElementChild;
+    if (root) {
+      root.style.minHeight = this._minimumLayoutHeight(this._layoutTree) + "px";
+      root.style.minWidth = "100%";
+      root.style.flex = "0 0 auto";
+    }
     this._scheduleLayout();
   }
 
@@ -440,6 +656,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       const pane = doc.createElement("section");
       pane.className = "tabbed-foundry-pane";
       pane.dataset.paneId = node.id;
+      pane.style.minHeight = MIN_PANE_HEIGHT + "px";
       if (node.id === this._activePaneId) pane.classList.add("active");
 
       const tabs = doc.createElement("nav");
@@ -590,10 +807,12 @@ class TabbedFoundryHost extends HandlebarsApplication {
     const split = doc.createElement("div");
     split.className = "tabbed-foundry-split split-" + node.direction;
     split.dataset.splitId = node.id;
+    split.style.minHeight = this._minimumLayoutHeight(node) + "px";
 
     const first = doc.createElement("div");
     first.className = "tabbed-foundry-split-child split-first";
     first.style.flex = node.ratio + " 1 0px";
+    first.style.minHeight = this._minimumLayoutHeight(node.first) + "px";
     this._renderLayoutNode(node.first, first);
 
     const divider = doc.createElement("div");
@@ -622,6 +841,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     const second = doc.createElement("div");
     second.className = "tabbed-foundry-split-child split-second";
     second.style.flex = (1 - node.ratio) + " 1 0px";
+    second.style.minHeight = this._minimumLayoutHeight(node.second) + "px";
     this._renderLayoutNode(node.second, second);
 
     split.append(first, divider, second);
@@ -782,6 +1002,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     if (destination) destination.activeId = appId;
     this._activePaneId = targetPaneId;
     this._renderWorkspace();
+    this.persistLayout();
   }
 
   _dropOnTab(appId, targetPaneId, targetAppId) {
@@ -807,6 +1028,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       this._activePaneId = refreshedTarget.id;
     }
     this._renderWorkspace();
+    this.persistLayout();
   }
 
   _dropOnPane(appId, targetPaneId, zone) {
@@ -826,6 +1048,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
       source.activeId = appId;
       this._activePaneId = source.id;
       this._renderWorkspace();
+    this.persistLayout();
       return;
     }
 
@@ -836,6 +1059,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     destination.activeId = appId;
     this._activePaneId = destination.id;
     this._renderWorkspace();
+    this.persistLayout();
   }
 
   _splitPaneWithApplication(appId, targetPaneId, edge) {
@@ -865,6 +1089,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._layoutTree = this._replacePane(this._layoutTree, targetPaneId, splitNode);
     this._activePaneId = newPane.id;
     this._renderWorkspace();
+    this.persistLayout();
   }
 
   activate(appId, paneId) {
@@ -874,6 +1099,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._activePaneId = pane.id;
     for (const app of this._tabbedApps.values()) this._decorateChild(app);
     this._renderWorkspace();
+    this.persistLayout();
   }
 
   _onChildClosed(id) {
@@ -946,6 +1172,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     if (restorePosition && originalPosition && app.rendered) app.setPosition(originalPosition);
     this._renderWorkspace();
     this._scheduleLayout();
+    this.persistLayout();
     if (closeWhenEmpty) this._closeWhenEmpty();
   }
 
@@ -1257,6 +1484,7 @@ async function getOrCreateHost() {
     host = candidate;
     try {
       await candidate.ensureDetachedWindow();
+      await candidate.restorePersistedLayout();
       return candidate;
     } catch (error) {
       if (host === candidate) host = null;
@@ -1413,9 +1641,20 @@ Hooks.once("init", () => {
     default: true
   });
 
+  game.settings.register(MODULE_ID, SETTING_LAYOUT_STATE, {
+    name: "Organização das guias do Tabbed Foundry",
+    scope: "client",
+    config: false,
+    type: Object,
+    default: null
+  });
+
   installDetachInterceptor();
   installAttachInterceptor();
-  Hooks.on("renderApplicationV2", (app) => installExternalApplicationDrag(app));
+  Hooks.on("renderApplicationV2", (app) => {
+    installExternalApplicationDrag(app);
+    host?.restorePendingApplication(app);
+  });
   Hooks.on("openDetachedWindow", () => installExternalDragSources());
 });
 
@@ -1439,6 +1678,15 @@ Hooks.once("ready", async () => {
       if (host) await host.close();
     }
   };
+
+  try {
+    const savedLayout = game.settings.get(MODULE_ID, SETTING_LAYOUT_STATE);
+    if (savedLayout?.version === 1 && Array.isArray(savedLayout.apps) && savedLayout.apps.length) {
+      await getOrCreateHost();
+    }
+  } catch (error) {
+    console.error("[" + MODULE_ID + "] Não foi possível reabrir o Tabbed Foundry salvo.", error);
+  }
 
   console.info(
     "[" + MODULE_ID + "] Carregado. Agrupamento automático: " +

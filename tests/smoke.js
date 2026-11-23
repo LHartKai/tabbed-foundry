@@ -73,6 +73,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
         }
       }
     },
+    CONFIG: { ui: {} },
     Hooks: {
       once(name, callback) {
         if (!hooks.has(name)) hooks.set(name, []);
@@ -256,9 +257,8 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   }
   const actorTab = new ActorDirectory();
   const playlistTab = new PlaylistDirectory();
-  // Foundry v14 exposes the built-in directory tabs on ui, not as Sidebar children.
-  env.context.ui.actors = actorTab;
-  env.context.ui.playlists = playlistTab;
+  // Foundry v14 exposes rendered directory instances through ApplicationV2.instances().
+  // They are not guaranteed to be stored in Sidebar.children.
   env.context.ui.sidebar = new env.ApplicationV2();
   env.context.ui.sidebar.popouts = {};
   assert.equal(
@@ -273,6 +273,16 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   );
   assert.equal(actorTab.rendered, false, "the original Actor Directory tab remains in the sidebar");
   assert.equal(playlistTab.rendered, false, "the original Playlist Directory tab remains in the sidebar");
+
+  // If a directory instance is not present in the instance registry yet,
+  // CONFIG.ui provides the native v14 class needed to create a popout source.
+  env.context.ApplicationV2._instances.delete(actorTab);
+  env.context.CONFIG.ui.actors = ActorDirectory;
+  const fallbackDirectory = await env.context.reopenKnownApplication({
+    className: "ActorDirectory",
+    title: "Actor Directory"
+  });
+  assert.equal(fallbackDirectory.id, "actors-popout", "CONFIG.ui.actors is used when no rendered directory instance exists");
 
   const legacySheet = new env.ApplicationV2();
   legacySheet.document = { uuid: "Actor.legacy-test" };
@@ -379,6 +389,8 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /PainelInvestigacao: game\.op2\?\.painelInvestigacao/, "the Ordem Paranormal investigation panel uses its public reopen function");
   assert.match(source, /PainelAcaoApp: game\.op2\?\.painelAcao/, "the Ordem Paranormal action panel uses its public reopen function");
   assert.match(source, /mej\.openJournalEntry\(document\)/, "Monk's Enhanced Journal uses its own public reopen API");
+  assert.match(source, /getOpenApplications\(\)[\s\S]*?app\.isPopout !== true/, "directory restoration locates the original tab among ApplicationV2 instances");
+  assert.match(source, /CONFIG\.ui\?\.\[tabName\]/, "directory restoration can fall back to the Foundry v14 core class registry");
   assert.match(source, /await tab\.renderPopout\(\)/, "core directory popouts are restored through the native sidebar API");
   assert.match(source, /target\.restorePendingApplication\(app\)/, "intercepted popouts retain their original saved pane");
   assert.match(

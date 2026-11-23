@@ -31,6 +31,12 @@ function getOpenApplications() {
   if (registry instanceof Map) {
     for (const app of registry.values()) apps.add(app);
   }
+  for (const app of ui?.sidebar?.children?.values?.() ?? []) {
+    if (app instanceof ApplicationV2) apps.add(app);
+  }
+  for (const app of Object.values(ui?.sidebar?.popouts ?? {})) {
+    if (app instanceof ApplicationV2) apps.add(app);
+  }
   for (const app of Object.values(ui?.sidebar?.tabs ?? {})) {
     if (app instanceof ApplicationV2) apps.add(app);
   }
@@ -41,6 +47,70 @@ function getOpenApplications() {
 function getApplicationDocumentUuid(app) {
   const uuid = app?.document?.uuid ?? app?.object?.uuid ?? null;
   return typeof uuid === "string" && uuid.length ? uuid : null;
+}
+
+async function reopenKnownApplication(record) {
+  if (!record) return null;
+
+  // Ordem Paranormal 2 exposes public entry points for its singleton panels.
+  // These are application windows, not document sheets, so fromUuid() cannot
+  // recreate them.
+  const op2Openers = {
+    PainelInvestigacao: game.op2?.painelInvestigacao,
+    PainelAcaoApp: game.op2?.painelAcao
+  };
+  const op2Opener = op2Openers[record.className];
+  if (typeof op2Opener === "function") {
+    try {
+      const app = await op2Opener.call(game.op2);
+      if (!(app instanceof ApplicationV2)) return null;
+      if (!app.rendered) await app.render({ force: true });
+      return app;
+    } catch (error) {
+      console.warn("[" + MODULE_ID + "] Não foi possível reabrir " + record.title + " pelo sistema.", error);
+      return null;
+    }
+  }
+
+  // Monk's Enhanced Journal owns a separate application singleton. Calling
+  // JournalEntry.sheet would create the core sheet, not the Enhanced Journal.
+  if (record.className === "EnhancedJournal" && record.documentUuid) {
+    const mej = game.MonksEnhancedJournal;
+    if (typeof mej?.openJournalEntry !== "function" || typeof fromUuid !== "function") return null;
+    try {
+      const document = await fromUuid(record.documentUuid);
+      if (!document) return null;
+      const opened = await mej.openJournalEntry(document);
+      if (!opened) return null;
+      const app = mej.journal;
+      return app instanceof ApplicationV2 ? app : null;
+    } catch (error) {
+      console.warn("[" + MODULE_ID + "] Não foi possível reabrir o Monk's Enhanced Journal.", error);
+      return null;
+    }
+  }
+
+  // Core directory popouts are recreated through the owning sidebar tab's
+  // public renderPopout() method, not by constructing another directory.
+  if (["ActorDirectory", "PlaylistDirectory"].includes(record.className)) {
+    const sidebar = ui?.sidebar;
+    const children = [...(sidebar?.children?.values?.() ?? [])];
+    const tab = children.find(app =>
+      app?.constructor?.name === record.className &&
+      typeof app.renderPopout === "function"
+    );
+    if (!tab) return null;
+    try {
+      const existingPopout = tab.popout ?? sidebar.popouts?.[tab.tabName];
+      const app = existingPopout ?? await tab.renderPopout();
+      return app instanceof ApplicationV2 ? app : null;
+    } catch (error) {
+      console.warn("[" + MODULE_ID + "] Não foi possível reabrir o diretório " + record.title + ".", error);
+      return null;
+    }
+  }
+
+  return null;
 }
 
 async function reopenDocumentSheet(record) {
@@ -173,6 +243,7 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._detachingHostPromise = null;
     this._persistQueue = Promise.resolve();
     this._pendingRestore = null;
+    this._pendingApplicationRestores = new WeakMap();
     this._restoreStarted = false;
     this._restoringLayout = false;
     this.addEventListener("close", () => {
@@ -424,8 +495,9 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._renderWorkspace();
     for (const record of [...(this._pendingRestore?.apps ?? [])]) {
       let app = this._findRestorableApplication(record);
+      if (!app) app = await reopenKnownApplication(record);
       if (!app) app = await reopenDocumentSheet(record);
-      if (app) await this.restorePendingApplication(app);
+      if (app && !this._tabbedApps.has(app.id)) await this.restorePendingApplication(app);
     }
     this._restoringLayout = false;
     if (!this._pendingRestore || this._pendingRestore.apps.length === 0) {
@@ -448,6 +520,19 @@ class TabbedFoundryHost extends HandlebarsApplication {
   }
 
   async restorePendingApplication(app) {
+    const existingRestore = this._pendingApplicationRestores.get(app);
+    if (existingRestore) return existingRestore;
+
+    const task = this._restorePendingApplication(app);
+    this._pendingApplicationRestores.set(app, task);
+    try {
+      return await task;
+    } finally {
+      this._pendingApplicationRestores.delete(app);
+    }
+  }
+
+  async _restorePendingApplication(app) {
     const pending = this._pendingRestore;
     if (!pending || !(app instanceof ApplicationV2) || app === this) return false;
     const documentUuid = getApplicationDocumentUuid(app);
@@ -1558,7 +1643,8 @@ async function captureApplication(app, options, nativeDetach) {
   const promise = (async () => {
     try {
       target = await getOrCreateHost();
-      await target.adopt(app, options);
+      const restored = await target.restorePendingApplication(app);
+      if (!restored && !target._tabbedApps.has(app.id)) await target.adopt(app, options);
       return app;
     } catch (error) {
       console.error("[" + MODULE_ID + "] Falha ao agrupar aplicação; executando detach nativo.", error);

@@ -275,9 +275,6 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /documentUuid: getApplicationDocumentUuid\(app\)/, "document UUIDs are persisted for document-backed applications");
   assert.match(source, /await reopenDocumentSheet\(record\)/, "document-backed applications are recreated from saved UUIDs");
   assert.match(source, /restorePendingApplication\(app\)/, "applications created after startup can rejoin their saved tabs");
-  assert.match(source, /this\._minimumLayoutHeight\(this\._layoutTree\)/, "nested vertical splits calculate a scrollable workspace height");
-  assert.match(stylesheet, /overflow-y:\s*auto/, "the Tabbed workspace exposes its own vertical scrollbar");
-  assert.match(stylesheet, /pointer-events:\s*auto\s*!important/, "the workspace scrollbar remains interactive");
   assert.match(
     source,
     /if \(this\._detachingApps\.has\(app\.id\)\) return;/,

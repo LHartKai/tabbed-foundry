@@ -204,6 +204,11 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /_enqueueTransition\(operation\)/, "state transitions are serialized");
   assert.match(source, /await existingHost\._transitionQueue/, "new captures wait for an active return transition");
   assert.match(source, /_layoutFrameView/, "animation frames are cancelled against their originating Electron view");
+  assert.match(source, /SETTING_LAYOUT_STATE/, "the workspace layout has a persistent client setting");
+  assert.match(source, /game\.settings\.set\(MODULE_ID, SETTING_LAYOUT_STATE, snapshot\)/, "layout changes are saved as they happen");
+  assert.match(source, /async restorePersistedLayout\(\)/, "the saved workspace layout is restored on startup");
+  assert.match(source, /restorePendingApplication\(app\)/, "applications created after startup can rejoin their saved tabs");
+  assert.match(source, /this\._minimumLayoutHeight\(this\._layoutTree\)/, "nested vertical splits calculate a scrollable workspace height");
   assert.match(
     source,
     /if \(this\._detachingApps\.has\(app\.id\)\) return;/,

@@ -276,7 +276,7 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
 
   // If a directory instance is not present in the instance registry yet,
   // CONFIG.ui provides the native v14 class needed to create a popout source.
-  env.context.ApplicationV2._instances.delete(actorTab);
+  env.ApplicationV2._instances.delete(actorTab);
   env.context.CONFIG.ui.actors = ActorDirectory;
   const fallbackDirectory = await env.context.reopenKnownApplication({
     className: "ActorDirectory",

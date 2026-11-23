@@ -375,6 +375,11 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /documentUuid: getApplicationDocumentUuid\(app\)/, "document UUIDs are persisted for document-backed applications");
   assert.match(source, /await reopenDocumentSheet\(record\)/, "document-backed applications are recreated from saved UUIDs");
   assert.match(source, /restorePendingApplication\(app\)/, "applications created after startup can rejoin their saved tabs");
+  assert.match(source, /PainelInvestigacao: game\.op2\?\.painelInvestigacao/, "the Ordem Paranormal investigation panel uses its public reopen function");
+  assert.match(source, /PainelAcaoApp: game\.op2\?\.painelAcao/, "the Ordem Paranormal action panel uses its public reopen function");
+  assert.match(source, /mej\.openJournalEntry\(document\)/, "Monk's Enhanced Journal uses its own public reopen API");
+  assert.match(source, /await tab\.renderPopout\(\)/, "core directory popouts are restored through the native sidebar API");
+  assert.match(source, /target\.restorePendingApplication\(app\)/, "intercepted popouts retain their original saved pane");
   assert.match(
     source,
     /if \(this\._detachingApps\.has\(app\.id\)\) return;/,

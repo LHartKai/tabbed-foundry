@@ -1,7 +1,6 @@
 const MODULE_ID = "tabbed-foundry";
 const SETTING_AUTO_GROUP = "autoGrouping";
 const SETTING_LAYOUT_STATE = "layoutState";
-const MIN_PANE_HEIGHT = 260;
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 const HandlebarsApplication = HandlebarsApplicationMixin(ApplicationV2);
@@ -176,11 +175,8 @@ class TabbedFoundryHost extends HandlebarsApplication {
     this._pendingRestore = null;
     this._restoreStarted = false;
     this._restoringLayout = false;
-    this._workspaceScrollElement = null;
     this.addEventListener("close", () => {
       this.persistLayout();
-      this._workspaceScrollElement?.removeEventListener("scroll", this._boundLayout);
-      this._workspaceScrollElement = null;
       this._removeLayoutObservers();
       this._closeTabContextMenu();
       this._finishDragSession(false);
@@ -692,32 +688,12 @@ class TabbedFoundryHost extends HandlebarsApplication {
     });
   }
 
-  _minimumLayoutHeight(node) {
-    if (!node || node.type === "pane") return MIN_PANE_HEIGHT;
-    const first = this._minimumLayoutHeight(node.first);
-    const second = this._minimumLayoutHeight(node.second);
-    return node.direction === "vertical"
-      ? first + second + 7
-      : Math.max(first, second);
-  }
-
   _renderWorkspace() {
     const workspace = this.element?.querySelector("[data-tabbed-workspace]");
     if (!workspace) return;
-    if (this._workspaceScrollElement !== workspace) {
-      this._workspaceScrollElement?.removeEventListener("scroll", this._boundLayout);
-      this._workspaceScrollElement = workspace;
-      workspace.addEventListener("scroll", this._boundLayout, { passive: true });
-    }
     workspace.replaceChildren();
     this._paneContentElements.clear();
     this._renderLayoutNode(this._layoutTree, workspace);
-    const root = workspace.firstElementChild;
-    if (root) {
-      root.style.minHeight = this._minimumLayoutHeight(this._layoutTree) + "px";
-      root.style.minWidth = "100%";
-      root.style.flex = "0 0 auto";
-    }
     this._scheduleLayout();
   }
 
@@ -727,7 +703,6 @@ class TabbedFoundryHost extends HandlebarsApplication {
       const pane = doc.createElement("section");
       pane.className = "tabbed-foundry-pane";
       pane.dataset.paneId = node.id;
-      pane.style.minHeight = MIN_PANE_HEIGHT + "px";
       if (node.id === this._activePaneId) pane.classList.add("active");
 
       const tabs = doc.createElement("nav");
@@ -878,12 +853,10 @@ class TabbedFoundryHost extends HandlebarsApplication {
     const split = doc.createElement("div");
     split.className = "tabbed-foundry-split split-" + node.direction;
     split.dataset.splitId = node.id;
-    split.style.minHeight = this._minimumLayoutHeight(node) + "px";
 
     const first = doc.createElement("div");
     first.className = "tabbed-foundry-split-child split-first";
     first.style.flex = node.ratio + " 1 0px";
-    first.style.minHeight = this._minimumLayoutHeight(node.first) + "px";
     this._renderLayoutNode(node.first, first);
 
     const divider = doc.createElement("div");
@@ -914,7 +887,6 @@ class TabbedFoundryHost extends HandlebarsApplication {
     const second = doc.createElement("div");
     second.className = "tabbed-foundry-split-child split-second";
     second.style.flex = (1 - node.ratio) + " 1 0px";
-    second.style.minHeight = this._minimumLayoutHeight(node.second) + "px";
     this._renderLayoutNode(node.second, second);
 
     split.append(first, divider, second);

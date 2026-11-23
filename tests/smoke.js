@@ -256,11 +256,10 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   }
   const actorTab = new ActorDirectory();
   const playlistTab = new PlaylistDirectory();
+  // Foundry v14 exposes the built-in directory tabs on ui, not as Sidebar children.
+  env.context.ui.actors = actorTab;
+  env.context.ui.playlists = playlistTab;
   env.context.ui.sidebar = new env.ApplicationV2();
-  env.context.ui.sidebar.children = new Map([
-    ["actors", actorTab],
-    ["playlists", playlistTab]
-  ]);
   env.context.ui.sidebar.popouts = {};
   assert.equal(
     (await env.context.reopenKnownApplication({ className: "ActorDirectory", title: "Actor Directory" })).id,
@@ -270,8 +269,10 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.equal(
     (await env.context.reopenKnownApplication({ className: "PlaylistDirectory", title: "Playlist Directory" })).id,
     "playlists-popout",
-    "the Playlist Directory popout is recreated through the sidebar tab"
+    "the Playlist Directory popout is recreated through the ui.playlists sidebar tab"
   );
+  assert.equal(actorTab.rendered, false, "the original Actor Directory tab remains in the sidebar");
+  assert.equal(playlistTab.rendered, false, "the original Playlist Directory tab remains in the sidebar");
 
   const legacySheet = new env.ApplicationV2();
   legacySheet.document = { uuid: "Actor.legacy-test" };

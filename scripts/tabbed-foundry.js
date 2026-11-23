@@ -507,7 +507,23 @@ class TabbedFoundryHost extends HandlebarsApplication {
       let app = this._findRestorableApplication(record);
       if (!app) app = await reopenKnownApplication(record);
       if (!app) app = await reopenDocumentSheet(record);
-      if (app && !this._tabbedApps.has(app.id)) await this.restorePendingApplication(app);
+      if (app && !this._tabbedApps.has(app.id)) {
+        const restored = await this.restorePendingApplication(app);
+        if (!restored) {
+          console.warn(
+            "[" + MODULE_ID + "] A aplicação " + record.title +
+            " foi reaberta, mas não pôde ser associada à aba salva.",
+            {
+              savedId: record.id,
+              restoredId: app.id,
+              savedClass: record.className,
+              restoredClass: app.constructor?.name,
+              parentId: app.parent?.id ?? null,
+              workspaceId: workspaceAnchor?.id ?? null
+            }
+          );
+        }
+      }
     }
     this._restoringLayout = false;
     if (!this._pendingRestore || this._pendingRestore.apps.length === 0) {
@@ -550,6 +566,10 @@ class TabbedFoundryHost extends HandlebarsApplication {
       ? pending.apps.find(item => item.documentUuid === documentUuid)
       : null;
     if (!record) record = pending.apps.find(item => String(app.id) === item.id);
+    if (!record && ["ActorDirectory", "PlaylistDirectory"].includes(app.constructor?.name)) {
+      const directoryMatches = pending.apps.filter(item => item.className === app.constructor.name);
+      if (directoryMatches.length === 1) record = directoryMatches[0];
+    }
     if (!record) {
       const matches = pending.apps.filter(item =>
         app.constructor?.name === item.className &&

@@ -393,6 +393,8 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /CONFIG\.ui\?\.\[tabName\]/, "directory restoration can fall back to the Foundry v14 core class registry");
   assert.match(source, /await tab\.renderPopout\(\)/, "core directory popouts are restored through the native sidebar API");
   assert.match(source, /target\.restorePendingApplication\(app\)/, "intercepted popouts retain their original saved pane");
+  assert.match(source, /isDirectoryPopout[\s\S]*?app\.isPopout === true/, "native directory tabs are not mistaken for saved popout windows");
+  assert.match(source, /directoryMatches\.length === 1/, "a recreated directory popout is mapped to its unique saved pane by class");
   assert.match(
     source,
     /if \(this\._detachingApps\.has\(app\.id\)\) return;/,

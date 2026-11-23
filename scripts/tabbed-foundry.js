@@ -372,12 +372,12 @@ class TabbedFoundryHost extends HandlebarsApplication {
       }))
     };
     this._renderWorkspace();
-    for (const record of [...this._pendingRestore.apps]) {
+    for (const record of [...(this._pendingRestore?.apps ?? [])]) {
       const app = this._findRestorableApplication(record);
       if (app) await this.restorePendingApplication(app);
     }
     this._restoringLayout = false;
-    if (this._pendingRestore.apps.length === 0) {
+    if (!this._pendingRestore || this._pendingRestore.apps.length === 0) {
       this._pendingRestore = null;
       await this.persistLayout();
     }
@@ -399,11 +399,23 @@ class TabbedFoundryHost extends HandlebarsApplication {
   async restorePendingApplication(app) {
     const pending = this._pendingRestore;
     if (!pending || !(app instanceof ApplicationV2) || app === this) return false;
-    const record = pending.apps.find(item =>
-      String(app.id) === item.id ||
-      (app.constructor?.name === item.className &&
-        (item.configId == null || String(app.options?.id ?? "") === item.configId))
-    );
+    let record = pending.apps.find(item => String(app.id) === item.id);
+    if (!record) {
+      const matches = pending.apps.filter(item =>
+        app.constructor?.name === item.className &&
+        item.configId != null &&
+        String(app.options?.id ?? "") === item.configId
+      );
+      if (matches.length === 1) record = matches[0];
+      else if (matches.length === 0) {
+        const titleMatches = pending.apps.filter(item =>
+          item.configId == null &&
+          app.constructor?.name === item.className &&
+          item.title === (app.title ?? "")
+        );
+        if (titleMatches.length === 1) record = titleMatches[0];
+      }
+    }
     if (!record || this._tabbedApps.has(app.id)) return false;
     if (app.parent && app.parent !== workspaceAnchor) return false;
 
@@ -1653,7 +1665,9 @@ Hooks.once("init", () => {
   installAttachInterceptor();
   Hooks.on("renderApplicationV2", (app) => {
     installExternalApplicationDrag(app);
-    host?.restorePendingApplication(app);
+    host?.restorePendingApplication(app).catch(error => {
+      console.warn("[" + MODULE_ID + "] Falha ao recuperar uma guia após o recarregamento.", error);
+    });
   });
   Hooks.on("openDetachedWindow", () => installExternalDragSources());
 });

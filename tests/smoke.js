@@ -18,9 +18,14 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   ]);
 
   class ApplicationV2 {
+    static _instances = new Set();
+    static instances() {
+      return this._instances.values();
+    }
     constructor() {
       this.children = new Map();
       this.rendered = false;
+      ApplicationV2._instances.add(this);
     }
     async render(options = {}) {
       this.rendered = true;
@@ -134,6 +139,40 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   // The wrapper must be registered through libWrapper without replacing the
   // ApplicationV2 prototype method directly.
   const env = await boot();
+
+  const enumeratedApp = new env.ApplicationV2();
+  assert.ok(
+    env.context.getOpenApplications().includes(enumeratedApp),
+    "open applications are discovered through ApplicationV2.instances()"
+  );
+  assert.equal(
+    env.context.getApplicationDocumentUuid({ document: { uuid: "Actor.restore-test" } }),
+    "Actor.restore-test",
+    "document-backed applications expose a stable document UUID"
+  );
+
+  const documentSheet = new env.ApplicationV2();
+  documentSheet.document = { uuid: "Actor.restore-test" };
+  env.context.fromUuid = async uuid => (
+    uuid === "Actor.restore-test" ? { sheet: documentSheet } : null
+  );
+  assert.equal(
+    await env.context.reopenDocumentSheet({
+      documentUuid: "Actor.restore-test",
+      className: "ApplicationV2"
+    }),
+    documentSheet,
+    "a saved document sheet can be resolved again after a reload"
+  );
+  assert.equal(
+    await env.context.reopenDocumentSheet({
+      documentUuid: "Actor.restore-test",
+      className: "DifferentApplication"
+    }),
+    null,
+    "restoration does not substitute a different sheet class"
+  );
+
   assert.equal(env.registrations.length, 2, "detach and attach lifecycle wrappers are registered");
   assert.equal(env.registrations[0].packageId, "tabbed-foundry");
   assert.equal(
@@ -207,6 +246,8 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /SETTING_LAYOUT_STATE/, "the workspace layout has a persistent client setting");
   assert.match(source, /game\.settings\.set\(MODULE_ID, SETTING_LAYOUT_STATE, snapshot\)/, "layout changes are saved as they happen");
   assert.match(source, /async restorePersistedLayout\(\)/, "the saved workspace layout is restored on startup");
+  assert.match(source, /documentUuid: getApplicationDocumentUuid\(app\)/, "document UUIDs are persisted for document-backed applications");
+  assert.match(source, /await reopenDocumentSheet\(record\)/, "document-backed applications are recreated from saved UUIDs");
   assert.match(source, /restorePendingApplication\(app\)/, "applications created after startup can rejoin their saved tabs");
   assert.match(source, /this\._minimumLayoutHeight\(this\._layoutTree\)/, "nested vertical splits calculate a scrollable workspace height");
   assert.match(stylesheet, /overflow-y:\s*auto/, "the Tabbed workspace exposes its own vertical scrollbar");

@@ -152,6 +152,35 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
     "document-backed applications expose a stable document UUID"
   );
 
+  class PersistentSheet extends env.ApplicationV2 {}
+  const persistentSheet = new PersistentSheet();
+  persistentSheet.id = "runtime-sheet-42";
+  persistentSheet.options = { id: "ActorSheet", uniqueId: "primary" };
+  persistentSheet.document = { uuid: "Actor.persistent-test" };
+  const sheetIdentity = env.context.getApplicationIdentity(persistentSheet);
+  assert.equal(sheetIdentity.key, "document:Actor.persistent-test:PersistentSheet:");
+  assert.equal(sheetIdentity.documentUuid, "Actor.persistent-test");
+  assert.equal(sheetIdentity.configuredId, "ActorSheet");
+  assert.equal(sheetIdentity.uniqueId, "primary");
+  assert.equal(env.context.applicationMatchesIdentity(persistentSheet, sheetIdentity), true);
+
+  class EnhancedJournal extends env.ApplicationV2 {}
+  const mejIdentityApp = new EnhancedJournal();
+  mejIdentityApp.id = "MonksEnhancedJournal";
+  const mejIdentity = env.context.getApplicationIdentity(mejIdentityApp);
+  assert.equal(mejIdentity.moduleId, "monks-enhanced-journal");
+  assert.equal(mejIdentity.key, "module:monks-enhanced-journal:EnhancedJournal::");
+  assert.equal(env.context.applicationMatchesIdentity(mejIdentityApp, mejIdentity), true);
+
+  const legacyIdentity = env.context.getRecordIdentity({
+    id: "old-runtime-id",
+    className: "PersistentSheet",
+    configId: "ActorSheet",
+    documentUuid: null
+  });
+  assert.equal(legacyIdentity.key, "runtime:old-runtime-id");
+  assert.equal(legacyIdentity.configuredId, "ActorSheet");
+
   const documentSheet = new env.ApplicationV2();
   documentSheet.document = { uuid: "Actor.restore-test" };
   env.context.fromUuid = async uuid => (
@@ -394,11 +423,15 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
   assert.match(source, /game\.settings\.set\(MODULE_ID, SETTING_LAYOUT_STATE, snapshot\)/, "layout changes are saved as they happen");
   assert.match(source, /async restorePersistedLayout\(\)/, "the saved workspace layout is restored on startup");
   assert.match(source, /documentUuid: getApplicationDocumentUuid\(app\)/, "document UUIDs are persisted for document-backed applications");
+  assert.match(source, /identity: getApplicationIdentity\(app\)/, "persistent application identity is saved alongside legacy layout metadata");
+  assert.match(source, /applicationMatchesIdentity\(app, identity\)/, "restoration matches applications through persistent identity");
+  assert.match(source, /identityMatches.length === 1/, "ambiguous identity matches are not guessed");
+
   assert.match(source, /await reopenDocumentSheet\(record\)/, "document-backed applications are recreated from saved UUIDs");
   assert.match(source, /restorePendingApplication\(app\)/, "applications created after startup can rejoin their saved tabs");
   assert.match(source, /PainelInvestigacao: game\.op2\?\.painelInvestigacao/, "the Ordem Paranormal investigation panel uses its public reopen function");
   assert.match(source, /PainelAcaoApp: game\.op2\?\.painelAcao/, "the Ordem Paranormal action panel uses its public reopen function");
-  assert.match(source, /mej\.openJournalEntry\(document\)/, "Monk's Enhanced Journal uses its own public reopen API");
+  assert.match(source, /mej\.openJournalEntry\(\)/, "Monk's Enhanced Journal reopens without changing its active internal tab");
   assert.match(source, /getOpenApplications\(\)[\s\S]*?app\.isPopout !== true/, "directory restoration locates the original tab among ApplicationV2 instances");
   assert.match(source, /CONFIG\.ui\?\.\[tabName\]/, "directory restoration can fall back to the Foundry v14 core class registry");
   assert.match(source, /await tab\.renderPopout\(\)/, "core directory popouts are restored through the native sidebar API");

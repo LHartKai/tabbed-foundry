@@ -48,6 +48,65 @@ function getApplicationDocumentUuid(app) {
   return typeof uuid === "string" && uuid.length ? uuid : null;
 }
 
+function getApplicationIdentity(app) {
+  const className = app?.constructor?.name ?? "";
+  const documentUuid = getApplicationDocumentUuid(app);
+  const configuredId = app?.options?.id == null ? null : String(app.options.id);
+  const uniqueId = app?.options?.uniqueId == null ? null : String(app.options.uniqueId);
+  let moduleId = null;
+
+  if (className === "EnhancedJournal" || app?.id === "MonksEnhancedJournal") {
+    moduleId = "monks-enhanced-journal";
+  } else if (["PainelInvestigacao", "PainelAcaoApp"].includes(className)) {
+    moduleId = "ordem-paranormal";
+  }
+
+  let key;
+  if (documentUuid) {
+    key = "document:" + documentUuid + ":" + className + ":" + (uniqueId ?? "");
+  } else if (moduleId) {
+    key = "module:" + moduleId + ":" + className + ":" + (configuredId ?? "") + ":" + (uniqueId ?? "");
+  } else if (configuredId || uniqueId) {
+    key = "application:" + className + ":" + (configuredId ?? "") + ":" + (uniqueId ?? "");
+  } else {
+    // Legacy/runtime fallback only; this key is not claimed to survive reloads.
+    key = "runtime:" + String(app?.id ?? "");
+  }
+
+  return { key, moduleId, className, configuredId, uniqueId, documentUuid };
+}
+
+function getRecordIdentity(record) {
+  if (record?.identity && typeof record.identity === "object") return record.identity;
+  // Compatibility with version-1 layouts written before persistent identities.
+  return {
+    key: record?.documentUuid
+      ? "document:" + record.documentUuid + ":" + (record.className ?? "") + ":"
+      : "runtime:" + String(record?.id ?? ""),
+    moduleId: null,
+    className: record?.className ?? "",
+    configuredId: record?.configId == null ? null : String(record.configId),
+    uniqueId: null,
+    documentUuid: record?.documentUuid ?? null
+  };
+}
+
+function applicationMatchesIdentity(app, identity) {
+  if (!app || !identity) return false;
+  const candidate = getApplicationIdentity(app);
+  if (identity.documentUuid && candidate.documentUuid !== identity.documentUuid) return false;
+  if (identity.className && candidate.className !== identity.className) return false;
+  if (identity.moduleId && candidate.moduleId !== identity.moduleId) return false;
+  if (identity.configuredId != null && candidate.configuredId !== String(identity.configuredId)) return false;
+  if (identity.uniqueId != null && candidate.uniqueId !== String(identity.uniqueId)) return false;
+  return Boolean(
+    identity.documentUuid ||
+    identity.moduleId ||
+    identity.configuredId != null ||
+    identity.uniqueId != null
+  );
+}
+
 async function reopenKnownApplication(record) {
   if (!record) return null;
 
@@ -454,7 +513,8 @@ class TabbedFoundryHost extends HandlebarsApplication {
         className: app.constructor?.name ?? "",
         configId: app.options?.id == null ? null : String(app.options.id),
         title: app.title ?? "",
-        documentUuid: getApplicationDocumentUuid(app)
+        documentUuid: getApplicationDocumentUuid(app),
+        identity: getApplicationIdentity(app)
       });
     }
     for (const record of this._pendingRestore?.apps ?? []) {
@@ -488,6 +548,12 @@ class TabbedFoundryHost extends HandlebarsApplication {
       : apps;
     const exact = candidates.find(app => String(app.id) === record.id);
     if (exact) return exact;
+
+    const identity = getRecordIdentity(record);
+    const identityMatches = candidates.filter(app => applicationMatchesIdentity(app, identity));
+    if (identityMatches.length === 1) return identityMatches[0];
+    if (identityMatches.length > 1) return null;
+
     const matches = candidates.filter(app =>
       app.constructor?.name === record.className &&
       (record.configId == null || String(app.options?.id ?? "") === record.configId)
@@ -520,7 +586,8 @@ class TabbedFoundryHost extends HandlebarsApplication {
         className: String(record.className ?? ""),
         configId: record.configId == null ? null : String(record.configId),
         title: String(record.title ?? ""),
-        documentUuid: record.documentUuid == null ? null : String(record.documentUuid)
+        documentUuid: record.documentUuid == null ? null : String(record.documentUuid),
+        identity: getRecordIdentity(record)
       }))
     };
     this._renderWorkspace();
@@ -582,10 +649,16 @@ class TabbedFoundryHost extends HandlebarsApplication {
   async _restorePendingApplication(app) {
     const pending = this._pendingRestore;
     if (!pending || !(app instanceof ApplicationV2) || app === this) return false;
+    const identityMatches = pending.apps.filter(item =>
+      applicationMatchesIdentity(app, getRecordIdentity(item))
+    );
+    let record = identityMatches.length === 1 ? identityMatches[0] : null;
+    if (!record && identityMatches.length > 1) return false;
+
     const documentUuid = getApplicationDocumentUuid(app);
-    let record = documentUuid
-      ? pending.apps.find(item => item.documentUuid === documentUuid)
-      : null;
+    if (!record && documentUuid) {
+      record = pending.apps.find(item => item.documentUuid === documentUuid);
+    }
     if (!record) record = pending.apps.find(item => String(app.id) === item.id);
     if (!record && ["ActorDirectory", "PlaylistDirectory"].includes(app.constructor?.name)) {
       const directoryMatches = pending.apps.filter(item => item.className === app.constructor.name);

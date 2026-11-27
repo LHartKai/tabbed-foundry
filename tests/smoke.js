@@ -207,27 +207,37 @@ async function boot({ libWrapperActive = true, registerThrows = false } = {}) {
       this.document = document;
     }
   }
-  const journalDocument = { uuid: "JournalEntry.restore-test" };
+  const persistedMejTabs = [
+    { id: "mej-tab-1", entityId: "JournalEntry.one", active: false, history: ["JournalEntry.one"] },
+    { id: "mej-tab-2", entityId: "JournalEntry.two", active: true, history: ["JournalEntry.two", "JournalEntry.previous"] }
+  ];
   const mej = {
     journal: null,
-    async openJournalEntry(document) {
-      this.journal = new EnhancedJournal(document);
+    openArguments: null,
+    async openJournalEntry(...args) {
+      this.openArguments = args;
+      this.journal = new EnhancedJournal(undefined);
+      this.journal.tabs = persistedMejTabs;
       this.journal.rendered = true;
       return true;
     }
   };
   env.context.game.MonksEnhancedJournal = mej;
-  env.context.fromUuid = async uuid => uuid === journalDocument.uuid ? journalDocument : null;
+  env.context.fromUuid = async () => {
+    throw new Error("MEJ restoration must not resolve or navigate to the previously active document");
+  };
   assert.equal(
     await env.context.reopenKnownApplication({
       className: "EnhancedJournal",
-      documentUuid: journalDocument.uuid,
+      documentUuid: "JournalEntry.two",
       title: "Monk's Enhanced Journal"
     }),
     mej.journal,
-    "Monk's Enhanced Journal is reopened through openJournalEntry instead of document.sheet"
+    "Monk's Enhanced Journal is reopened through its singleton API"
   );
-  assert.equal(mej.journal.document, journalDocument);
+  assert.deepEqual(mej.openArguments, [], "MEJ is reopened without a document argument so its own persisted active tab is preserved");
+  assert.equal(mej.journal.document, undefined, "Tabbed does not inject a document into the MEJ singleton during restoration");
+  assert.equal(mej.journal.tabs, persistedMejTabs, "MEJ retains ownership of its persisted internal tab list");
 
   class ActorDirectory extends env.ApplicationV2 {
     constructor() {

@@ -71,20 +71,20 @@ async function reopenKnownApplication(record) {
     }
   }
 
-  // Monk's Enhanced Journal owns a separate application singleton. Calling
-  // JournalEntry.sheet would create the core sheet, not the Enhanced Journal.
-  if (record.className === "EnhancedJournal" && record.documentUuid) {
+  // Monk's Enhanced Journal owns its own persisted tab list and active tab.
+  // Reopen the singleton without a document so MEJ can restore that state itself.
+  // Passing record.documentUuid here would navigate MEJ to that document and can
+  // overwrite the active tab that MEJ already persisted for this user.
+  if (record.className === "EnhancedJournal" || record.id === "MonksEnhancedJournal") {
     const mej = game.MonksEnhancedJournal;
-    if (typeof mej?.openJournalEntry !== "function" || typeof fromUuid !== "function") return null;
+    if (typeof mej?.openJournalEntry !== "function") return null;
     try {
-      const document = await fromUuid(record.documentUuid);
-      if (!document) return null;
-      const opened = await mej.openJournalEntry(document);
+      const opened = await mej.openJournalEntry();
       if (!opened) return null;
       const app = mej.journal;
       return app instanceof ApplicationV2 ? app : null;
     } catch (error) {
-      console.warn("[" + MODULE_ID + "] Não foi possível reabrir o Monk's Enhanced Journal.", error);
+      console.warn("[" + MODULE_ID + "] Não foi possível reabrir o Monk's Enhanced Journal sem alterar a guia ativa.", error);
       return null;
     }
   }
